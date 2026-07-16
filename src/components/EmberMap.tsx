@@ -3,9 +3,10 @@ import Map, { useControl } from 'react-map-gl/maplibre'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import type { FireData } from '../lib/types'
+import type { EonetEvent, FireData } from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
+import { attachEonetInteraction, syncEonetSymbols } from '../lib/eonetSymbols'
 import {
   ENTRANCE_START,
   fireCenter,
@@ -13,7 +14,7 @@ import {
   reducedMotion,
   startIdleRotation,
 } from '../lib/cinematics'
-import { useEmber, type Basemap, type Projection } from '../store'
+import { setEmber, useEmber, type Basemap, type Projection } from '../store'
 
 /** CARTO dark styles — zero-key vector basemaps (decision log: docs/DECISIONS.md). */
 const BASEMAP_STYLES: Record<Basemap, string> = {
@@ -39,6 +40,9 @@ function DeckGLOverlay(props: ConstructorParameters<typeof MapboxOverlay>[0]) {
   // MapboxOverlay implements maplibre's IControl, so react-map-gl can mount it.
   const overlay = useControl(() => new MapboxOverlay(props)) as unknown as MapboxOverlay
   overlay.setProps(props)
+  if (import.meta.env.DEV) {
+    ;(window as unknown as { __emberOverlay?: MapboxOverlay }).__emberOverlay = overlay
+  }
   return null
 }
 
@@ -73,7 +77,15 @@ function styleMapForSpace(map: MapLibreMap, projection: Projection) {
   }
 }
 
-export function EmberMap({ data, quality }: { data: FireData | undefined; quality: QualityConfig }) {
+export function EmberMap({
+  data,
+  events,
+  quality,
+}: {
+  data: FireData | undefined
+  events: EonetEvent[] | undefined
+  quality: QualityConfig
+}) {
   const mapRef = useRef<MapRef>(null)
   const jump = useMemo(cameraOverride, [])
   const [mapLoaded, setMapLoaded] = useState(false)
@@ -87,14 +99,21 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
   const dayNight = useEmber((s) => s.dayNight)
   const showHeat = useEmber((s) => s.showHeat)
   const showPoints = useEmber((s) => s.showPoints)
+  const showEvents = useEmber((s) => s.showEvents)
   const projection = useEmber((s) => s.projection)
   const basemap = useEmber((s) => s.basemap)
+  const days = useEmber((s) => s.days)
+  const playhead = useEmber((s) => s.playhead)
+  const selectedEventId = useEmber((s) => s.selectedEventId)
 
-  // Keep the current projection visible to the style.load handler without
+  // Keep current values visible to the style.load handler without
   // re-registering it (a basemap switch replaces the whole style, wiping the
-  // projection, sky and our re-tint — they must be re-applied).
+  // projection, sky, our re-tint AND the eonet symbol layers — all must be
+  // re-applied the moment the new style lands).
   const projectionRef = useRef(projection)
   projectionRef.current = projection
+  const eonetArgsRef = useRef({ events, selectedEventId, showEvents })
+  eonetArgsRef.current = { events, selectedEventId, showEvents }
 
   // Entrance: once the globe is up and data has arrived, ease down from orbit
   // onto the hardest-burning longitude while the fires ignite (§5.7).
@@ -146,6 +165,30 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
     mapRef.current?.getMap()?.setProjection({ type: projection })
   }, [projection, mapLoaded])
 
+  // Live mode shows the whole fetched window; a playhead shows a 24h slice
+  // ending `playhead` days ago. Either way it's one GPU uniform.
+  const timeRange = useMemo<[number, number]>(
+    () => (playhead === null ? [0, days] : [Math.max(0, playhead - 1), playhead]),
+    [playhead, days],
+  )
+
+  // EONET markers are maplibre-native symbol layers (deck icon/text layers
+  // don't render on the globe — see lib/eonetSymbols.ts). Sync on every
+  // relevant change; the style.load handler re-syncs after basemap swaps.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncEonetSymbols(map, events ?? [], selectedEventId, showEvents)
+  }, [mapLoaded, events, selectedEventId, showEvents])
+
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    return attachEonetInteraction(map, (selectedEventId) => setEmber({ selectedEventId }))
+  }, [mapLoaded])
+
   const layers = useMemo(
     () =>
       data
@@ -154,12 +197,15 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
             zoom,
             quality,
             filters: { frpMin, confMin, dayNight },
+            timeRange,
             showHeat,
             showPoints,
             ignite,
+            // fires render beneath the event reticles once those layers exist
+            beforeId: mapLoaded ? 'eonet-icons' : undefined,
           })
         : [],
-    [data, zoom, quality, frpMin, confMin, dayNight, showHeat, showPoints, ignite],
+    [data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, mapLoaded],
   )
 
   return (
@@ -176,9 +222,18 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
       onLoad={(e) => {
         const map = e.target as MapLibreMap
         styleMapForSpace(map, projectionRef.current)
+        // Symbol layers must exist before deck layers anchor to them via
+        // beforeId — create them (empty) before the loaded re-render.
+        const args = eonetArgsRef.current
+        syncEonetSymbols(map, args.events ?? [], args.selectedEventId, args.showEvents)
         // Any later style swap (basemap switch) rebuilds from scratch —
-        // re-apply projection, sky and tint when the new style lands.
-        map.on('style.load', () => styleMapForSpace(map, projectionRef.current))
+        // re-apply projection, sky, tint and symbols when the new style lands
+        // ('style.load' fires before deck re-resolves its layer groups).
+        map.on('style.load', () => {
+          styleMapForSpace(map, projectionRef.current)
+          const a = eonetArgsRef.current
+          syncEonetSymbols(map, a.events ?? [], a.selectedEventId, a.showEvents)
+        })
         if (import.meta.env.DEV) {
           // test hook: lets headless verification read camera state
           ;(window as unknown as { __emberMap?: MapLibreMap }).__emberMap = map
@@ -189,6 +244,8 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
       attributionControl={{ compact: true }}
       style={{ position: 'absolute', inset: 0, background: 'transparent' }}
     >
+      {/* Event selection is handled by maplibre symbol-layer listeners
+          (attachEonetInteraction); deck layers aren't pickable this phase. */}
       <DeckGLOverlay layers={layers} interleaved />
     </Map>
   )

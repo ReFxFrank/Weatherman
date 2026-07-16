@@ -1,13 +1,15 @@
 import { useMemo } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Flame, Satellite } from 'lucide-react'
-import { fetchFireDecoded } from './lib/api'
+import { fetchEonetEvents, fetchFireDecoded, REFRESH_MS } from './lib/api'
 import { deriveRenderAttributes } from './lib/binary'
 import { qualityConfig } from './lib/quality'
 import { useFps } from './lib/useFps'
 import { EmberMap } from './components/EmberMap'
+import { EventCard } from './components/EventCard'
 import { FilterPanel } from './components/FilterPanel'
 import { Starfield } from './components/Starfield'
+import { TimeControl } from './components/TimeControl'
 import { glass } from './components/ui'
 import { SOURCES, useEmber } from './store'
 
@@ -19,26 +21,40 @@ export default function App() {
   const confMin = useEmber((s) => s.confMin)
   const dayNight = useEmber((s) => s.dayNight)
 
-  const quality = useMemo(() => {
-    const q = qualityConfig(tier)
-    // dev/test override: ?stride=N decimates points without changing the tier
-    const stride = Number(new URLSearchParams(location.search).get('stride'))
-    return Number.isFinite(stride) && stride >= 1 ? { ...q, stride: Math.floor(stride) } : q
-  }, [tier])
+  const quality = useMemo(() => qualityConfig(tier), [tier])
   const debug = useMemo(() => new URLSearchParams(location.search).has('debug'), [])
   const fps = useFps(debug)
 
-  // Refetch happens ONLY when source/days change (§5.3); filters and quality
-  // reuse the cached payload.
-  const { data: decoded, isLoading, isError, error, isPlaceholderData } = useQuery({
+  // Refetch happens ONLY when source/days change (§5.3) — plus the §5.2
+  // auto-refresh tick, which swaps data in place without any reload.
+  const { data: decoded, isLoading, isError, error, isPlaceholderData, dataUpdatedAt } = useQuery({
     queryKey: ['fire', source, days],
     queryFn: () => fetchFireDecoded(source, days),
     placeholderData: keepPreviousData,
+    refetchInterval: REFRESH_MS,
   })
 
+  // EONET named events — keyless + CORS-friendly, fetched straight from the
+  // client (§3.2), refreshed on the same cadence.
+  const { data: events } = useQuery({
+    queryKey: ['eonet'],
+    queryFn: fetchEonetEvents,
+    staleTime: REFRESH_MS,
+    refetchInterval: REFRESH_MS,
+  })
+
+  // Decimation stride: the tier baseline, scaled up so multi-day windows stay
+  // under the tier's rendered-point cap. ?stride=N (dev/test) wins outright.
+  const stride = useMemo(() => {
+    const override = Number(new URLSearchParams(location.search).get('stride'))
+    if (Number.isFinite(override) && override >= 1) return Math.floor(override)
+    if (!decoded) return quality.stride
+    return Math.max(quality.stride, Math.ceil(decoded.count / quality.maxPoints))
+  }, [decoded, quality])
+
   const data = useMemo(
-    () => (decoded ? deriveRenderAttributes(decoded, quality.stride) : undefined),
-    [decoded, quality.stride],
+    () => (decoded ? deriveRenderAttributes(decoded, stride) : undefined),
+    [decoded, stride],
   )
 
   // Filtered count for the HUD — the GPU does the visual filtering; this CPU
@@ -60,11 +76,18 @@ export default function App() {
   const filtersActive = frpMin > 0 || confMin > 0 || dayNight !== 'all'
   const sourceLabel = SOURCES.find((x) => x.id === source)?.label ?? source
 
+  if (import.meta.env.DEV) {
+    // test hook: lets headless verification locate real event markers
+    ;(window as unknown as { __emberEvents?: typeof events }).__emberEvents = events
+  }
+
   return (
     <div className="relative h-full w-full overflow-hidden">
       <Starfield />
-      <EmberMap data={data} quality={quality} />
-      <FilterPanel />
+      <EmberMap data={data} events={events} quality={quality} />
+      <FilterPanel eventsCount={events?.length} />
+      <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />
+      <EventCard events={events} />
 
       {/* Brand + feed status HUD */}
       <header className={`absolute left-4 top-4 z-10 px-4 py-3 select-none ${glass}`}>
@@ -110,7 +133,7 @@ export default function App() {
 
       {/* Required data attribution (§10 footer) */}
       <footer
-        className={`absolute bottom-8 left-4 z-10 px-3 py-1.5 text-[10px] tracking-wide text-slate-500 ${glass}`}
+        className={`absolute bottom-1 left-2 z-0 px-2 py-1 text-[9px] tracking-wide text-slate-600 ${glass}`}
       >
         Active fire data: NASA FIRMS (MODIS/VIIRS) · Named events: NASA EONET
       </footer>

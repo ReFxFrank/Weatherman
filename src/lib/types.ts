@@ -41,9 +41,28 @@ export interface FireData {
   colors: Uint8Array
   /** derived radius per point, meters */
   radii: Float32Array
-  /** derived [frp, conf, night] triplets for the GPU DataFilterExtension */
+  /**
+   * derived [frp, conf, night, ageDays] per point for the GPU
+   * DataFilterExtension — ageDays is days before meta.fetchedAt
+   */
   filterValues: Float32Array
 }
 
 /** Decoded payload before render attributes are derived. */
 export type DecodedFire = Omit<FireData, 'colors' | 'radii' | 'filterValues'>
+
+/** A curated named wildfire event from NASA EONET v3. */
+export interface EonetEvent {
+  id: string
+  title: string
+  /** EONET API link for the event */
+  link: string
+  /** most recent geometry date, ISO */
+  date: string
+  /** [lon, lat] of the most recent geometry point */
+  coordinates: [number, number]
+  /** e.g. burned area in acres, when the source reports one */
+  magnitudeValue: number | null
+  magnitudeUnit: string | null
+  sources: Array<{ id: string; url: string }>
+}

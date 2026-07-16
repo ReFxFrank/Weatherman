@@ -42,8 +42,8 @@ const ADDITIVE_BLEND = {
  */
 const DEPTH_RELEASE_ZOOM = 4.5
 
-/** One shared extension instance: [frp, conf, night] per point. */
-const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 3 })]
+/** One shared extension instance: [frp, conf, night, ageDays] per point. */
+const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 4 })]
 
 /** 0→1 as x goes from e0→e1. */
 function smoothstep(e0: number, e1: number, x: number): number {
@@ -64,10 +64,14 @@ export interface FireLayerOpts {
   zoom: number
   quality: QualityConfig
   filters: FireFilters
+  /** visible detection-age window in days-before-fetch: [newest, oldest] */
+  timeRange: [number, number]
   showHeat: boolean
   showPoints: boolean
   /** entrance ignition progress 0→1 (1 once the intro has played) */
   ignite: number
+  /** map layer to insert beneath (keeps fires under the EONET reticles) */
+  beforeId?: string
 }
 
 export function buildFireLayers({
@@ -75,9 +79,11 @@ export function buildFireLayers({
   zoom,
   quality,
   filters,
+  timeRange,
   showHeat,
   showPoints,
   ignite,
+  beforeId,
 }: FireLayerOpts): Layer[] {
   const { count, positions, colors, radii, filterValues } = data
 
@@ -103,10 +109,21 @@ export function buildFireLayers({
 
   const nightRange: [number, number] =
     filters.dayNight === 'day' ? [0, 0] : filters.dayNight === 'night' ? [1, 1] : [0, 1]
+  const ageRange: [number, number] = [timeRange[0], Math.max(timeRange[1], timeRange[0] + 0.01)]
   const filterRange: [number, number][] = [
     [filters.frpMin, 1e9],
     [filters.confMin, 2],
     nightRange,
+    ageRange,
+  ]
+  // Feather only the age edges so scrubbing dissolves detections in/out
+  // instead of popping them (§5.2 "prioritize making it smooth").
+  const ageFeather = Math.min(0.12, (ageRange[1] - ageRange[0]) / 4)
+  const filterSoftRange: [number, number][] = [
+    [filters.frpMin, 1e9],
+    [filters.confMin, 2],
+    nightRange,
+    [ageRange[0] + ageFeather, ageRange[1] - ageFeather],
   ]
 
   const depthCompare = zoom > DEPTH_RELEASE_ZOOM ? ('always' as const) : ('less-equal' as const)
@@ -114,8 +131,11 @@ export function buildFireLayers({
     id: string,
     o: { radiusScale: number; minPx: number; maxPx: number; opacity: number },
   ) =>
-    new ScatterplotLayer<unknown, DataFilterExtensionProps>({
+    // beforeId is a MapboxOverlay interleaved-mode prop, absent from the core
+    // layer types — declared via the extra-props generic.
+    new ScatterplotLayer<unknown, DataFilterExtensionProps & { beforeId?: string }>({
       id,
+      beforeId,
       data: sharedData,
       radiusUnits: 'meters' as const,
       radiusScale: o.radiusScale * igniteScale,
@@ -128,6 +148,7 @@ export function buildFireLayers({
       parameters: { ...ADDITIVE_BLEND, depthCompare },
       extensions: FILTER_EXTENSIONS,
       filterRange,
+      filterSoftRange,
     })
 
   const layers: (Layer | false)[] = [

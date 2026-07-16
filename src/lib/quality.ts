@@ -11,14 +11,16 @@ export interface QualityConfig {
   glowPasses: 0 | 1 | 2
   /** minimum splat size of the low-zoom heat field (kernel radius, px) */
   heatMinPx: number
-  /** point decimation stride (1 = all points) */
+  /** baseline point decimation stride (1 = all points) */
   stride: number
+  /** cap on rendered points — multi-day windows decimate down to this (§8) */
+  maxPoints: number
 }
 
 const CONFIGS: Record<QualityTier, QualityConfig> = {
-  high: { tier: 'high', glowPasses: 2, heatMinPx: 8, stride: 1 },
-  balanced: { tier: 'balanced', glowPasses: 1, heatMinPx: 7, stride: 1 },
-  performance: { tier: 'performance', glowPasses: 0, heatMinPx: 5.5, stride: 2 },
+  high: { tier: 'high', glowPasses: 2, heatMinPx: 8, stride: 1, maxPoints: 1_500_000 },
+  balanced: { tier: 'balanced', glowPasses: 1, heatMinPx: 7, stride: 1, maxPoints: 700_000 },
+  performance: { tier: 'performance', glowPasses: 0, heatMinPx: 5.5, stride: 2, maxPoints: 300_000 },
 }
 
 function gpuRendererString(): string {

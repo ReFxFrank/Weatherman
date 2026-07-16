@@ -23,7 +23,7 @@ export type Basemap = 'dark' | 'dark-nolabels'
 
 export interface EmberState {
   source: SourceId
-  /** day window 1–10 (slider UI arrives in Phase 3) */
+  /** fetched day window 1–10 (§5.2 time-range slider) */
   days: number
   /** hide detections below this FRP (MW); 0 = show all */
   frpMin: number
@@ -32,10 +32,19 @@ export interface EmberState {
   dayNight: DayNight
   showHeat: boolean
   showPoints: boolean
+  showEvents: boolean
   projection: Projection
   basemap: Basemap
   quality: QualityTier
   panelOpen: boolean
+  /**
+   * Time playback (§5.2): null = live view of the whole window; a number is
+   * the trailing edge (days ago) of a 24h slice being scrubbed/played.
+   */
+  playhead: number | null
+  playing: boolean
+  /** id of the EONET event whose detail card is open */
+  selectedEventId: string | null
 }
 
 export const useEmber = create<EmberState>(() => ({
@@ -46,14 +55,22 @@ export const useEmber = create<EmberState>(() => ({
   dayNight: 'all',
   showHeat: true,
   showPoints: true,
+  showEvents: true,
   projection: 'globe',
   basemap: 'dark',
   quality: detectQualityTier(),
   panelOpen: true,
+  playhead: null,
+  playing: false,
+  selectedEventId: null,
 }))
 
 export function setEmber(partial: Partial<EmberState>) {
   if (partial.quality) localStorage.setItem('ember-quality', partial.quality)
+  // Changing the fetch window invalidates any slice position within it.
+  if (partial.days !== undefined) {
+    partial = { playhead: null, playing: false, ...partial }
+  }
   useEmber.setState(partial)
 }
 

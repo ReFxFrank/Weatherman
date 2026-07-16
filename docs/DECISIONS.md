@@ -111,6 +111,32 @@ for debugging.
   Idle rotation checks the live projection and only spins the globe.
 - Suomi NPP's public 24h feed is currently near-empty (aging satellite,
   data gaps) — the UI just shows a low/zero count; not a bug.
+
+## Phase 3 notes
+
+- **Time = the 4th GPU filter component.** Each point carries
+  `[frp, conf, night, ageDays]`; the window slider, scrubbing and playback
+  only move `filterRange`/`filterSoftRange` uniforms (age edges are feathered
+  so detections dissolve in/out). Verified: zero network requests while
+  scrubbing/playing; only the (source, days) key refetches.
+- **deck.gl IconLayer/TextLayer do not render under MapLibre's globe camera**
+  (probe: zero drawn pixels + failed picks on globe, correct in mercator;
+  ScatterplotLayer is fine). EONET markers are therefore MapLibre-native
+  symbol layers — full globe support, built-in label collision, native
+  hit-testing — created empty at map load so deck's fire layers can anchor
+  below them via `beforeId` (deck re-resolves its layer groups on styledata,
+  and `style.load` fires first, so basemap swaps stay ordered).
+- **EONET query uses `status=open&days=30`** — open alone returns ~6.8k stale
+  incidents; the 30-day activity window keeps it to ~130 genuinely active
+  named events. Note EONET skews toward US/CA agency reports; most global
+  savanna burning is unnamed (that's what FIRMS shows).
+- Playback pace is 2.4 s per day of data, dt-clamped so slow renderers slow
+  down rather than skip. Multi-day payloads decimate to a per-tier
+  `maxPoints` cap (§8) — the 7d world file is ~0.5–1.2M detections.
+- The keyless public feeds only exist in 24h/48h/7d granularities; requesting
+  3–7 days fetches the 7d file and the GPU age filter trims it client-side,
+  so the slider behaves identically with or without a key (8–10 days shows a
+  "feed caps at 7d" hint until a FIRMS_MAP_KEY is configured).
 - Confidence normalization: VIIRS `l/n/h` *and* the public feeds' `low/nominal/high`
   words *and* MODIS numeric (`<30` → low, `30–79` → nominal, `≥80` → high) all map
   to one internal 0/1/2 scale.

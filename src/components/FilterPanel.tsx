@@ -25,7 +25,7 @@ const fmtFrp = (frp: number) => (frp >= 10 ? Math.round(frp).toString() : frp.to
 
 const AUTO_TIER = detectQualityTier()
 
-export function FilterPanel() {
+export function FilterPanel({ eventsCount }: { eventsCount?: number }) {
   const s = useEmber()
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: fetchHealth, staleTime: Infinity })
   const hasKey = health?.hasKey ?? false
@@ -132,6 +132,12 @@ export function FilterPanel() {
         <Section icon={Layers} title="LAYERS">
           <Toggle checked={s.showHeat} onChange={(showHeat) => setEmber({ showHeat })} label="Heat field" note="low zoom" />
           <Toggle checked={s.showPoints} onChange={(showPoints) => setEmber({ showPoints })} label="Fire points" note="high zoom" />
+          <Toggle
+            checked={s.showEvents}
+            onChange={(showEvents) => setEmber({ showEvents })}
+            label="Named events"
+            note={eventsCount !== undefined ? `${eventsCount} open` : 'EONET'}
+          />
         </Section>
 
         <Section icon={GlobeIcon} title="VIEW">

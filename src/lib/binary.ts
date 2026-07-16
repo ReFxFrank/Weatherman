@@ -64,7 +64,10 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
 
   const colors = new Uint8Array(n * 4)
   const radii = new Float32Array(n)
-  const filterValues = new Float32Array(n * 3)
+  const filterValues = new Float32Array(n * 4)
+  // Age is relative to the payload's fetch time — stable per dataset, so the
+  // GPU buffer never needs rebuilding as wall-clock time passes.
+  const fetchSec = Math.floor(Date.parse(d.meta.fetchedAt) / 1000) || Math.floor(Date.now() / 1000)
   for (let i = 0; i < n; i++) {
     const [r, g, b] = frpColor(frp[i])
     colors[i * 4] = r
@@ -72,9 +75,10 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
     colors[i * 4 + 2] = b
     colors[i * 4 + 3] = 255
     radii[i] = frpRadiusMeters(frp[i])
-    filterValues[i * 3] = frp[i]
-    filterValues[i * 3 + 1] = conf[i]
-    filterValues[i * 3 + 2] = night[i]
+    filterValues[i * 4] = frp[i]
+    filterValues[i * 4 + 1] = conf[i]
+    filterValues[i * 4 + 2] = night[i]
+    filterValues[i * 4 + 3] = Math.max(0, (fetchSec - tsSec[i]) / 86400)
   }
 
   return { meta: d.meta, count: n, positions, frp, tsSec, bright, conf, night, colors, radii, filterValues }
