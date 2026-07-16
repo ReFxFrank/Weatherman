@@ -45,11 +45,26 @@ data *and* active chrome (LIVE badge, counts), neutral cool glass for panels.
 **To change it:** the ReFx-blue-chrome variant is a Tailwind token swap —
 say the word and chrome goes blue with warm tones reserved strictly for fire.
 
-## 6. Deploy target → **undecided, kept portable**
+## 6. Deploy target → **GitHub Pages** (baked-static mode), proxy stays portable
 
-Proxy is plain Hono, so all three candidates work: Vercel function, CF Pages+Workers
-(cache moves to edge KV), or a VPS Node service. Recommendation: decide by Phase 4;
-Vercel is the least-friction default for a Vite SPA + one API route.
+Frank asked for GitHub Pages. Pages is static-only, so the proxy's three jobs
+(hide the key, cache, CSV→binary) move into a scheduled GitHub Action
+(`.github/workflows/pages.yml`) that *bakes* live FIRMS data every 20 minutes
+and redeploys it with the app — `scripts/bake-data.ts` reuses the exact
+parse/encode pipeline via `server/firms.ts`. The client's `VITE_DATA_MODE=static`
+build fetches `/data/hotspots-{source}-{24h|48h|7d}.bin` + `manifest.json`
+instead of `/api/*`; EONET stays a direct client call.
+
+Why this works so cleanly here: the app already GPU-trims 24h/48h/7d files to
+any 1–10-day window, world queries are the only queries, and the binary format
+is host-agnostic. `FIRMS_MAP_KEY` as an Actions secret never reaches the
+client (keeps the §4 rule) and unlocks Landsat in the baked feed.
+
+Trade-offs vs the live proxy: freshness is the cron cadence (~20 min + queue
+jitter) instead of 10-min on-demand; no regional bbox queries (unused so far);
+repo must stay public for free Pages/Actions. The Hono proxy remains fully
+supported for Node/Vercel/CF hosting — same wire format, zero client changes
+beyond the build flag.
 
 ## 7. Bloom: splat glow instead of `PostProcessEffect` (Phase 1)
 

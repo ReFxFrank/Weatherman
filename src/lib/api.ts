@@ -7,12 +7,31 @@ export const DEFAULT_SOURCE = 'VIIRS_NOAA20_NRT'
 export const REFRESH_MS = 10 * 60 * 1000
 
 /**
+ * Static mode (GitHub Pages): no proxy exists — a scheduled Action bakes the
+ * same binary payloads to /data/*.bin and the app fetches those instead.
+ * The ?v= tick makes each auto-refresh revalidate the CDN cache.
+ */
+const STATIC_MODE = import.meta.env.VITE_DATA_MODE === 'static'
+const cacheTick = () => Math.floor(Date.now() / REFRESH_MS)
+const windowFor = (days: number) => (days <= 1 ? '24h' : days <= 2 ? '48h' : '7d')
+
+/**
  * Fetch + decode the binary hotspot payload. Render attributes are derived
  * separately (per quality tier) so a quality switch never refetches.
  */
 export async function fetchFireDecoded(source = DEFAULT_SOURCE, days = 1): Promise<DecodedFire> {
-  const res = await fetch(`/api/hotspots?source=${encodeURIComponent(source)}&days=${days}`)
+  const url = STATIC_MODE
+    ? `${import.meta.env.BASE_URL}data/hotspots-${source}-${windowFor(days)}.bin?v=${cacheTick()}`
+    : `/api/hotspots?source=${encodeURIComponent(source)}&days=${days}`
+  const res = await fetch(url)
   if (!res.ok) {
+    if (STATIC_MODE) {
+      throw new Error(
+        res.status === 404
+          ? `${source} not in the baked feed (see the Pages workflow)`
+          : `data fetch failed (${res.status})`,
+      )
+    }
     let detail = ''
     try {
       const body = await res.json()
@@ -31,6 +50,12 @@ export interface HealthInfo {
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {
+  if (STATIC_MODE) {
+    const res = await fetch(`${import.meta.env.BASE_URL}data/manifest.json?v=${cacheTick()}`)
+    if (!res.ok) throw new Error(`manifest fetch failed (${res.status})`)
+    const manifest = (await res.json()) as { hasKey?: boolean }
+    return { ok: true, hasKey: Boolean(manifest.hasKey) }
+  }
   const res = await fetch('/api/health')
   if (!res.ok) throw new Error(`health check failed (${res.status})`)
   return res.json()

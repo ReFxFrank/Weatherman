@@ -1,0 +1,66 @@
+# Ember on GitHub Pages: build the SPA and bake live FIRMS fire data into
+# static binary payloads, redeployed on a schedule so the site stays a live
+# feed with no server. FIRMS_MAP_KEY (optional, enables Landsat + the area
+# API) lives in Actions secrets and never reaches the client.
+#
+# One-time setup: repo Settings → Pages → Source: "GitHub Actions"
+# (actions/configure-pages below also attempts to enable it automatically).
+name: Deploy Pages (app + live fire data)
+
+on:
+  schedule:
+    # Data refresh cadence. FIRMS NRT lags satellite overpass by ~1h anyway;
+    # 20 min stays well inside Pages' ~10 deploys/hour soft limit.
+    # NOTE: scheduled workflows only run from the repo's default branch.
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main, claude/ember-wildfire-map-0vcsas]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never queue more than one deploy; a fresher run supersedes an older one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build SPA in static-data mode
+        run: |
+          echo "VITE_BASE=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_ENV"
+          VITE_BASE="/${GITHUB_REPOSITORY#*/}/" VITE_DATA_MODE=static npm run build
+
+      - name: Bake live FIRMS data
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          OUT_DIR: dist/data
+        run: npx tsx scripts/bake-data.ts
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -47,6 +47,36 @@ one upstream fetch serves every visitor and quota is protected. Payloads travel
 as binary typed arrays (~4 MB for 187k points vs ~9 MB as JSON) and feed deck.gl
 directly — no client-side parsing.
 
+## Deploying
+
+### GitHub Pages (no server) — live feed via baked data
+
+Pages can't run the proxy, so `.github/workflows/pages.yml` replaces it: on a
+20-minute schedule (and every push to the default branch) it builds the SPA in
+static mode, runs `scripts/bake-data.ts` to fetch live FIRMS data and write the
+same binary payloads as static `/data/*.bin` files, and deploys everything to
+Pages. The app then fetches those files instead of `/api/*` — still live data,
+refreshed by the scheduler, served from the Pages CDN.
+
+One-time setup:
+
+1. **Settings → Pages → Source: "GitHub Actions"** (the workflow also tries to
+   enable this automatically on first run).
+2. *(Optional)* add `FIRMS_MAP_KEY` as an **Actions secret** — it stays inside
+   the runner and unlocks Landsat + the area API for the baked feed.
+3. Scheduled runs only fire from the repo's **default branch**.
+
+Site URL: `https://<user>.github.io/<repo>/`. Data freshness is the cron
+cadence (+ queue jitter) on top of FIRMS's own ~1h NRT latency; tune the cron
+in the workflow, staying under Pages' ~10 deploys/hour soft limit.
+
+### Any Node host / Vercel / Cloudflare (live proxy)
+
+`npm run build` + `npm start` serves the API on :8787 (put the SPA's `dist/`
+behind any static host pointing `/api` at it). The Hono app in
+`server/index.ts` ports to Vercel functions or CF Workers unchanged; move the
+in-memory cache to edge KV if you deploy it serverless.
+
 ### Dev/test URL params
 
 `?quality=high|balanced|performance` force a quality tier · `?stride=N` decimate
