@@ -71,12 +71,46 @@ Site URL: `https://<user>.github.io/<repo>/`. Data freshness is the cron
 cadence (+ queue jitter) on top of FIRMS's own ~1h NRT latency; tune the cron
 in the workflow, staying under Pages' ~10 deploys/hour soft limit.
 
-### Any Node host / Vercel / Cloudflare (live proxy)
+### Ubuntu VPS (live proxy — freshest mode)
 
-`npm run build` + `npm start` serves the API on :8787 (put the SPA's `dist/`
-behind any static host pointing `/api` at it). The Hono app in
-`server/index.ts` ports to Vercel functions or CF Workers unchanged; move the
-in-memory cache to edge KV if you deploy it serverless.
+One process serves everything: `npm start` hosts the built SPA *and* the API,
+and data live-updates by design — browsers refetch every 10 minutes, the
+server fetches FIRMS at most once per 10 minutes no matter how many visitors
+(single-flight cache, stale-on-error), EONET refreshes client-side. No cron.
+
+```bash
+# Ubuntu 22.04/24.04, Node 20+ (e.g. via apt or nvm)
+git clone https://github.com/ReFxFrank/Weatherman.git && cd Weatherman
+npm ci && npm run build
+cp .env.example .env        # optional: add FIRMS_MAP_KEY (stays server-side)
+PORT=8787 npm start         # app + api on :8787
+```
+
+Keep it alive with systemd (`/etc/systemd/system/ember.service`):
+
+```ini
+[Unit]
+Description=Ember wildfire map
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/Weatherman
+ExecStart=/usr/bin/npm start
+Restart=always
+EnvironmentFile=/opt/Weatherman/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+For TLS put Caddy (`reverse_proxy 127.0.0.1:8787` — automatic certificates)
+or nginx+certbot in front. Code updates: `git pull && npm ci && npm run build
+&& systemctl restart ember` (or wire a GitHub Action over SSH later).
+
+### Vercel / Cloudflare (live proxy, serverless)
+
+The Hono app in `server/index.ts` ports to Vercel functions or CF Workers
+unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 
 ### Dev/test URL params
 

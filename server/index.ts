@@ -6,8 +6,10 @@
  * The FIRMS fetch/parse/encode logic lives in server/firms.ts, shared with
  * the static data baker (scripts/bake-data.ts) used for GitHub Pages.
  */
+import { existsSync } from 'node:fs'
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { compress } from 'hono/compress'
 import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici'
 import {
@@ -128,9 +130,18 @@ app.get('/api/quota', async (c) => {
   }
 })
 
+// Single-process deployment (VPS): serve the built SPA next to the API.
+// API routes are registered above, so they win; unknown paths fall back to
+// index.html (SPA). In dev, Vite serves the app and this is simply unused.
+const hasDist = existsSync('./dist/index.html')
+if (hasDist) {
+  app.use('*', serveStatic({ root: './dist' }))
+  app.get('*', serveStatic({ path: './dist/index.html' }))
+}
+
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(
-    `[ember] api proxy on http://localhost:${info.port} — ` +
+    `[ember] ${hasDist ? 'app + api' : 'api proxy'} on http://localhost:${info.port} — ` +
       (MAP_KEY ? 'FIRMS area API (key set)' : 'public keyless feeds (set FIRMS_MAP_KEY for full API)'),
   )
 })
