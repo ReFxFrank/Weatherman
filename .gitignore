@@ -1,0 +1,13 @@
+# dependencies / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# environment — never commit the FIRMS MAP_KEY
+.env
+.env.local
+.env.*.local
+
+# editor / os noise
+.DS_Store
+*.log

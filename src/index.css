@@ -1,0 +1,30 @@
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  /* Deep-space backdrop (§6): near-black navy, slightly lifted at center */
+  background: radial-gradient(120% 90% at 50% 40%, #0a0e1a 0%, #05070f 55%, #02030a 100%);
+  color: #e2e8f0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Space must show through around the globe */
+.maplibregl-map,
+.maplibregl-canvas-container,
+canvas.maplibregl-canvas {
+  background: transparent !important;
+}
+
+/* Keep required attribution, restyle it to the HUD look */
+.maplibregl-ctrl-attrib {
+  background: rgba(10, 14, 26, 0.55) !important;
+  backdrop-filter: blur(6px);
+  font-size: 10px;
+}
+.maplibregl-ctrl-attrib a {
+  color: rgba(226, 232, 240, 0.55) !important;
+}
