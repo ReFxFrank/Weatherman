@@ -60,8 +60,9 @@ refreshed by the scheduler, served from the Pages CDN.
 
 One-time setup:
 
-1. **Settings → Pages → Source: "GitHub Actions"** (the workflow also tries to
-   enable this automatically on first run).
+1. **Settings → Pages → Source: "GitHub Actions"** — requires repo admin; the
+   workflow token can't enable it. Until it's flipped, runs succeed but skip
+   deployment with a notice; the next scheduled run then deploys automatically.
 2. *(Optional)* add `FIRMS_MAP_KEY` as an **Actions secret** — it stays inside
    the runner and unlocks Landsat + the area API for the baked feed.
 3. Scheduled runs only fire from the repo's **default branch**.
