@@ -152,6 +152,35 @@ for debugging.
   3–7 days fetches the 7d file and the GPU age filter trims it client-side,
   so the slider behaves identically with or without a key (8–10 days shows a
   "feed caps at 7d" hint until a FIRMS_MAP_KEY is configured).
+
+## Phase 4 notes
+
+- **Postmortem — the invisible-fires regression:** Phase 3 upgraded the
+  `DataFilterExtension` to `filterSize: 4` and the packed buffer to 4-stride,
+  but the binary attribute descriptor still said `size: 3`. The GPU read
+  misaligned filter values and culled almost every point; Phase 3's checks
+  were all CPU-side (request counts, playhead, clicks) so it shipped unseen.
+  Phase 4's visual verification caught it; fix is `size: 4`. Lesson encoded
+  here: every rendering-path change needs a *visual* assertion, and the stats
+  panel now cross-checks the GPU predicate with an independent CPU pass.
+- **FIRMS "24h" files are an ingest window, not an acquisition window** —
+  they carry rows up to ~2 days old. The GPU age filter enforces the honest
+  acquisition window the UI advertises, and the HUD headline is the filtered
+  count (stats.shownTotal over the full payload), not the raw row count.
+- **Stats/selection index space = the full decoded payload**, never the
+  decimated render set — counts stay truthful and top-5 jump-to selects the
+  right detection under any quality tier. Hotspot picking is a CPU
+  nearest-neighbor search (~2ms over 500k points) honoring the active
+  filters — deck picking isn't trusted on the globe.
+- **Terminator** = three maplibre fill layers (civil/nautical/astronomical
+  twilight bands at sun depressions 0°/6°/12°) from NOAA-grade solar math in
+  `lib/terminator.ts` (self-checked against point-in-polygon vs direct
+  altitude), re-synced every 60 s and anchored below the fire layers.
+- **Search** = Photon (komoot), keyless + CORS-open, debounced 300 ms;
+  resolves TODO #4.
+- Stats recompute is quantized to quarter-day time steps during playback and
+  throttled view updates (≥1.2 s), so the ~10 ms full-array pass never runs
+  per frame.
 - Confidence normalization: VIIRS `l/n/h` *and* the public feeds' `low/nominal/high`
   words *and* MODIS numeric (`<30` → low, `30–79` → nominal, `≥80` → high) all map
   to one internal 0/1/2 scale.

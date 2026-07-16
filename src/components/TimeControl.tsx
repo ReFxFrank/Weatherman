@@ -33,7 +33,7 @@ function RefreshReadout({ fetchedAt, dataUpdatedAt }: { fetchedAt: string; dataU
   const m = Math.floor(remain / 60000)
   const s = String(Math.floor((remain % 60000) / 1000)).padStart(2, '0')
   return (
-    <div className="text-right font-mono text-[10px] leading-tight text-slate-500">
+    <div className="text-right font-mono text-[10px] leading-tight text-slate-500 max-sm:hidden">
       <div>
         upd <span className="text-slate-400">{fmtUtc(fetchedAt)}</span>
       </div>
@@ -184,7 +184,7 @@ export function TimeControl({ data, dataUpdatedAt }: { data: FireData | undefine
         </button>
 
         {/* window size */}
-        <div className="w-[92px] shrink-0">
+        <div className="w-[92px] shrink-0 max-sm:w-[72px]">
           <input
             type="range"
             min={1}

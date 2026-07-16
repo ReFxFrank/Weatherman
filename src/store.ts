@@ -45,6 +45,16 @@ export interface EmberState {
   playing: boolean
   /** id of the EONET event whose detail card is open */
   selectedEventId: string | null
+  /** index into the current FireData of the hotspot whose card is open */
+  selectedHotspot: number | null
+  /** right-hand stats panel expanded (§5.4) */
+  statsOpen: boolean
+  /** real-time day/night terminator shading (§5.7) */
+  showTerminator: boolean
+  /** which mobile bottom-sheet tab is open (null = closed) */
+  sheet: 'filters' | 'stats' | null
+  /** bumped (throttled) when the viewport settles — recomputes in-view stats */
+  viewEpoch: number
 }
 
 export const useEmber = create<EmberState>(() => ({
@@ -63,6 +73,11 @@ export const useEmber = create<EmberState>(() => ({
   playhead: null,
   playing: false,
   selectedEventId: null,
+  selectedHotspot: null,
+  statsOpen: true,
+  showTerminator: true,
+  sheet: null,
+  viewEpoch: 0,
 }))
 
 export function setEmber(partial: Partial<EmberState>) {

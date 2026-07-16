@@ -49,6 +49,22 @@ export interface HealthInfo {
   hasKey: boolean
 }
 
+/** FIRMS quota status for the ?debug corner (§3.1). Null when unavailable. */
+export async function fetchQuota(): Promise<{ current: number; limit: number } | null> {
+  if (STATIC_MODE) return null
+  try {
+    const res = await fetch('/api/quota')
+    if (!res.ok) return null
+    const j = (await res.json()) as { current_transactions?: number; transaction_limit?: number }
+    if (typeof j.current_transactions === 'number') {
+      return { current: j.current_transactions, limit: j.transaction_limit ?? 5000 }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchHealth(): Promise<HealthInfo> {
   if (STATIC_MODE) {
     const res = await fetch(`${import.meta.env.BASE_URL}data/manifest.json?v=${cacheTick()}`)

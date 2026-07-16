@@ -14,7 +14,7 @@ real data only.
 | **1 — Rendering engine + wow core** | heat-field↔points cross-fade, additive splat glow ("fires as light"), quality tiers, binary payloads, cinematic entrance, idle rotation | ✅ done |
 | **2 — Controls & filters** | glassy filter panel: source switcher, FRP/confidence/day-night GPU filters, layer toggles, globe/flat, basemap, quality | ✅ done |
 | **3 — Time & named events** | 1–10d window + histogram timeline + day-by-day playback (GPU age filter), EONET named events with detail cards, 10-min auto-refresh | ✅ done |
-| 4 — Panels, detail, polish | stats, detail cards for hotspots, terminator, responsive | ⏳ next |
+| **4 — Panels, detail, polish** | live stats panel, hotspot detail cards + selection ring, real-time terminator with twilight bands, legend, Photon search, top-FRP pulse, error/empty/stale states, mobile bottom sheet | ✅ done |
 
 ## Stack
 

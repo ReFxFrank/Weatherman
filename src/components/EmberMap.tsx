@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Map, { useControl } from 'react-map-gl/maplibre'
 import type { MapRef } from 'react-map-gl/maplibre'
-import type { Map as MapLibreMap } from 'maplibre-gl'
+import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import type { EonetEvent, FireData } from '../lib/types'
+import type { DecodedFire, EonetEvent, FireData } from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
-import { attachEonetInteraction, syncEonetSymbols } from '../lib/eonetSymbols'
+import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
+import { syncTerminatorLayers } from '../lib/terminator'
+import { syncSelectionMarker } from '../lib/selectionMarker'
+import { findNearestHotspot } from '../lib/nearestHotspot'
+import { mapBus } from '../lib/mapBus'
 import {
   ENTRANCE_START,
   fireCenter,
@@ -24,6 +28,7 @@ const BASEMAP_STYLES: Record<Basemap, string> = {
 
 const IGNITE_DELAY_MS = 600
 const IGNITE_MS = 2200
+const PULSE_PERIOD_MS = 2600
 
 /** Dev/test camera override: ?lat=&lon=&z= jumps straight there, no entrance. */
 function cameraOverride(): { lon: number; lat: number; z: number } | null {
@@ -79,10 +84,14 @@ function styleMapForSpace(map: MapLibreMap, projection: Projection) {
 
 export function EmberMap({
   data,
+  full,
   events,
   quality,
 }: {
+  /** decimated render set (what deck draws) */
   data: FireData | undefined
+  /** full decoded payload — picking/selection index space (matches stats) */
+  full: DecodedFire | undefined
   events: EonetEvent[] | undefined
   quality: QualityConfig
 }) {
@@ -91,8 +100,11 @@ export function EmberMap({
   const [mapLoaded, setMapLoaded] = useState(false)
   const [zoom, setZoom] = useState(jump ? jump.z : ENTRANCE_START.zoom)
   const [ignite, setIgnite] = useState(jump ? 1 : 0)
+  const [pulse, setPulse] = useState(0)
   const [cameraSettled, setCameraSettled] = useState(Boolean(jump))
   const entranceStarted = useRef(false)
+  // Idle rotation emits moveend every frame — throttle in-view stat refreshes.
+  const lastEpochBump = useRef(0)
 
   const frpMin = useEmber((s) => s.frpMin)
   const confMin = useEmber((s) => s.confMin)
@@ -100,20 +112,50 @@ export function EmberMap({
   const showHeat = useEmber((s) => s.showHeat)
   const showPoints = useEmber((s) => s.showPoints)
   const showEvents = useEmber((s) => s.showEvents)
+  const showTerminator = useEmber((s) => s.showTerminator)
   const projection = useEmber((s) => s.projection)
   const basemap = useEmber((s) => s.basemap)
   const days = useEmber((s) => s.days)
   const playhead = useEmber((s) => s.playhead)
   const selectedEventId = useEmber((s) => s.selectedEventId)
+  const selectedHotspot = useEmber((s) => s.selectedHotspot)
 
-  // Keep current values visible to the style.load handler without
-  // re-registering it (a basemap switch replaces the whole style, wiping the
-  // projection, sky, our re-tint AND the eonet symbol layers — all must be
-  // re-applied the moment the new style lands).
-  const projectionRef = useRef(projection)
-  projectionRef.current = projection
-  const eonetArgsRef = useRef({ events, selectedEventId, showEvents })
-  eonetArgsRef.current = { events, selectedEventId, showEvents }
+  // Live mode shows the whole fetched window; a playhead shows a 24h slice
+  // ending `playhead` days ago. Either way it's one GPU uniform.
+  const timeRange = useMemo<[number, number]>(
+    () => (playhead === null ? [0, days] : [Math.max(0, playhead - 1), playhead]),
+    [playhead, days],
+  )
+
+  const selectedPoint = useMemo(
+    () =>
+      full && selectedHotspot !== null && selectedHotspot < full.count
+        ? { lon: full.positions[selectedHotspot * 2], lat: full.positions[selectedHotspot * 2 + 1] }
+        : null,
+    [full, selectedHotspot],
+  )
+
+  // Everything the style.load handler must restore after a basemap swap
+  // (which wipes projection, sky, tint and all native layers), readable
+  // without re-registering the handler.
+  const styleStateRef = useRef({
+    projection,
+    events,
+    selectedEventId,
+    showEvents,
+    showTerminator,
+    selectedPoint,
+  })
+  styleStateRef.current = { projection, events, selectedEventId, showEvents, showTerminator, selectedPoint }
+
+  /** Recreate every native layer (eonet, terminator, selection) in order. */
+  const syncNativeLayers = (map: MapLibreMap) => {
+    const s = styleStateRef.current
+    // eonet first: its icon layer is the beforeId anchor for deck + terminator
+    syncEonetSymbols(map, s.events ?? [], s.selectedEventId, s.showEvents)
+    syncTerminatorLayers(map, { beforeId: EONET_ICON_LAYER, visible: s.showTerminator })
+    syncSelectionMarker(map, s.selectedPoint)
+  }
 
   // Entrance: once the globe is up and data has arrived, ease down from orbit
   // onto the hardest-burning longitude while the fires ignite (§5.7).
@@ -159,34 +201,115 @@ export function EmberMap({
     return startIdleRotation(map)
   }, [cameraSettled])
 
+  // Gentle pulse driver for the top-FRP halos — ~30fps, paused when hidden.
+  useEffect(() => {
+    if (!cameraSettled || ignite < 1) return
+    let raf = 0
+    let last = 0
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick)
+      if (document.hidden || now - last < 33) return
+      last = now
+      setPulse((now / PULSE_PERIOD_MS) % 1)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [cameraSettled, ignite])
+
   // Projection toggle (§5.1: globe default, flat for regional drill-down).
   useEffect(() => {
     if (!mapLoaded) return
     mapRef.current?.getMap()?.setProjection({ type: projection })
   }, [projection, mapLoaded])
 
-  // Live mode shows the whole fetched window; a playhead shows a 24h slice
-  // ending `playhead` days ago. Either way it's one GPU uniform.
-  const timeRange = useMemo<[number, number]>(
-    () => (playhead === null ? [0, days] : [Math.max(0, playhead - 1), playhead]),
-    [playhead, days],
-  )
-
-  // EONET markers are maplibre-native symbol layers (deck icon/text layers
-  // don't render on the globe — see lib/eonetSymbols.ts). Sync on every
-  // relevant change; the style.load handler re-syncs after basemap swaps.
+  // Native layers re-sync on every relevant change (idempotent).
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
     if (!map) return
-    syncEonetSymbols(map, events ?? [], selectedEventId, showEvents)
-  }, [mapLoaded, events, selectedEventId, showEvents])
+    syncNativeLayers(map)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, events, selectedEventId, showEvents, showTerminator, selectedPoint])
 
+  // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
     if (!map) return
-    return attachEonetInteraction(map, (selectedEventId) => setEmber({ selectedEventId }))
+    const id = window.setInterval(() => {
+      syncTerminatorLayers(map, {
+        beforeId: EONET_ICON_LAYER,
+        visible: styleStateRef.current.showTerminator,
+      })
+    }, 60_000)
+    return () => clearInterval(id)
+  }, [mapLoaded])
+
+  // EONET selection (native symbol hit-testing) + hotspot picking: on any
+  // unclaimed click, nearest-detection search over the typed arrays.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    return attachEonetInteraction(map, (id) =>
+      setEmber(id ? { selectedEventId: id, selectedHotspot: null } : { selectedEventId: null }),
+    )
+  }, [mapLoaded])
+
+  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange })
+  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange }
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    const onClick = (e: MapMouseEvent) => {
+      if (e.defaultPrevented) return // an EONET marker claimed this click
+      const s = pickStateRef.current
+      if (!s.full) return
+      const idx = findNearestHotspot(
+        s.full,
+        e.lngLat,
+        map.getZoom(),
+        { frpMin: s.frpMin, confMin: s.confMin, dayNight: s.dayNight },
+        s.timeRange,
+      )
+      setEmber(idx !== null ? { selectedHotspot: idx, selectedEventId: null } : { selectedHotspot: null })
+    }
+    map.on('click', onClick)
+    return () => {
+      map.off('click', onClick)
+    }
+  }, [mapLoaded])
+
+  // Imperative bridge for search/stats navigation + viewport stats.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    mapBus.flyTo = ({ lon, lat, zoom: z }) =>
+      map.flyTo({ center: [lon, lat], zoom: z, duration: 1800, essential: false })
+    mapBus.getBounds = () => {
+      try {
+        const b = map.getBounds()
+        const west = b.getWest()
+        const east = b.getEast()
+        // maplibre reports unwrapped longitudes across the antimeridian
+        // (west 170, east 210) — normalize to [-180,180] so a west>east
+        // result means "crosses the antimeridian" downstream.
+        if (east - west >= 360) return { west: -180, south: -90, east: 180, north: 90 }
+        const wrap = (x: number) => {
+          const w = ((((x + 180) % 360) + 360) % 360) - 180
+          return w === -180 && x > 0 ? 180 : w
+        }
+        return { west: wrap(west), south: b.getSouth(), east: wrap(east), north: b.getNorth() }
+      } catch {
+        return null
+      }
+    }
+    return () => {
+      mapBus.flyTo = null
+      mapBus.getBounds = null
+    }
   }, [mapLoaded])
 
   const layers = useMemo(
@@ -201,11 +324,12 @@ export function EmberMap({
             showHeat,
             showPoints,
             ignite,
+            pulse,
             // fires render beneath the event reticles once those layers exist
-            beforeId: mapLoaded ? 'eonet-icons' : undefined,
+            beforeId: mapLoaded ? EONET_ICON_LAYER : undefined,
           })
         : [],
-    [data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, mapLoaded],
+    [data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, pulse, mapLoaded],
   )
 
   return (
@@ -221,18 +345,16 @@ export function EmberMap({
       mapStyle={BASEMAP_STYLES[basemap]}
       onLoad={(e) => {
         const map = e.target as MapLibreMap
-        styleMapForSpace(map, projectionRef.current)
-        // Symbol layers must exist before deck layers anchor to them via
-        // beforeId — create them (empty) before the loaded re-render.
-        const args = eonetArgsRef.current
-        syncEonetSymbols(map, args.events ?? [], args.selectedEventId, args.showEvents)
+        styleMapForSpace(map, styleStateRef.current.projection)
+        // Native layers must exist before deck layers anchor to them via
+        // beforeId — create them (empty if data is pending) pre-render.
+        syncNativeLayers(map)
         // Any later style swap (basemap switch) rebuilds from scratch —
-        // re-apply projection, sky, tint and symbols when the new style lands
-        // ('style.load' fires before deck re-resolves its layer groups).
+        // re-apply everything when the new style lands ('style.load' fires
+        // before deck re-resolves its layer groups).
         map.on('style.load', () => {
-          styleMapForSpace(map, projectionRef.current)
-          const a = eonetArgsRef.current
-          syncEonetSymbols(map, a.events ?? [], a.selectedEventId, a.showEvents)
+          styleMapForSpace(map, styleStateRef.current.projection)
+          syncNativeLayers(map)
         })
         if (import.meta.env.DEV) {
           // test hook: lets headless verification read camera state
@@ -241,11 +363,17 @@ export function EmberMap({
         setMapLoaded(true)
       }}
       onMove={(e) => setZoom(e.viewState.zoom)}
+      onMoveEnd={() => {
+        const now = Date.now()
+        if (now - lastEpochBump.current < 1200) return
+        lastEpochBump.current = now
+        setEmber({ viewEpoch: (useEmber.getState().viewEpoch + 1) % 1_000_000 })
+      }}
       attributionControl={{ compact: true }}
       style={{ position: 'absolute', inset: 0, background: 'transparent' }}
     >
       {/* Event selection is handled by maplibre symbol-layer listeners
-          (attachEonetInteraction); deck layers aren't pickable this phase. */}
+          (attachEonetInteraction); hotspot picking by nearest-search. */}
       <DeckGLOverlay layers={layers} interleaved />
     </Map>
   )

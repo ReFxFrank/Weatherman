@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+@theme {
+  /* §6: monospace numerals sell the "instrument" feel */
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 html,
 body,
 #root {

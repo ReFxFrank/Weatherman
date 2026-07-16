@@ -8,7 +8,13 @@ import { glass } from './ui'
  * reported size, and the originating agency links. Grows into the full
  * detail-card system in Phase 4.
  */
-export function EventCard({ events }: { events: EonetEvent[] | undefined }) {
+export function EventCard({
+  events,
+  className = 'absolute bottom-8 right-4 z-10 w-72',
+}: {
+  events: EonetEvent[] | undefined
+  className?: string
+}) {
   const id = useEmber((s) => s.selectedEventId)
   const ev = events?.find((e) => e.id === id)
   if (!ev) return null
@@ -17,7 +23,7 @@ export function EventCard({ events }: { events: EonetEvent[] | undefined }) {
   const [lon, lat] = ev.coordinates
 
   return (
-    <aside className={`absolute bottom-8 right-4 z-10 w-72 ${glass}`}>
+    <aside className={`${className} ${glass}`}>
       <header className="flex items-start justify-between gap-2 px-4 pt-3">
         <h2 className="text-[13px] font-semibold leading-snug text-sky-100">{ev.title}</h2>
         <button

@@ -70,8 +70,46 @@ export interface FireLayerOpts {
   showPoints: boolean
   /** entrance ignition progress 0→1 (1 once the intro has played) */
   ignite: number
+  /** breathing phase 0→1 for the top-FRP pulse halos (§6 restrained motion) */
+  pulse?: number
   /** map layer to insert beneath (keeps fires under the EONET reticles) */
   beforeId?: string
+}
+
+interface PulsePoint {
+  position: [number, number]
+  color: [number, number, number]
+  radius: number
+}
+
+/** The ~16 highest-FRP detections get a gentle breathing halo. Cached per dataset. */
+const pulseCache = new WeakMap<FireData, PulsePoint[]>()
+
+function topFires(data: FireData): PulsePoint[] {
+  let cached = pulseCache.get(data)
+  if (cached) return cached
+  const N = 16
+  const top: number[] = []
+  const { frp, positions, colors, radii, count } = data
+  for (let i = 0; i < count; i++) {
+    if (top.length < N) {
+      top.push(i)
+      if (top.length === N) top.sort((a, b) => frp[b] - frp[a])
+      continue
+    }
+    if (frp[i] <= frp[top[N - 1]]) continue
+    let k = N - 1
+    while (k > 0 && frp[i] > frp[top[k - 1]]) k--
+    top.splice(k, 0, i)
+    top.pop()
+  }
+  cached = top.map((i) => ({
+    position: [positions[i * 2], positions[i * 2 + 1]] as [number, number],
+    color: [colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2]] as [number, number, number],
+    radius: radii[i],
+  }))
+  pulseCache.set(data, cached)
+  return cached
 }
 
 export function buildFireLayers({
@@ -83,6 +121,7 @@ export function buildFireLayers({
   showHeat,
   showPoints,
   ignite,
+  pulse = 0,
   beforeId,
 }: FireLayerOpts): Layer[] {
   const { count, positions, colors, radii, filterValues } = data
@@ -103,7 +142,10 @@ export function buildFireLayers({
       getPosition: { value: positions, size: 2 },
       getFillColor: { value: colors, size: 4, normalized: true },
       getRadius: { value: radii, size: 1 },
-      getFilterValue: { value: filterValues, size: 3 },
+      // size MUST match the extension's filterSize (4) — a mismatched stride
+      // makes the GPU read garbage filter values and cull almost everything
+      // (this shipped briefly in Phase 3; caught by Phase 4's visual checks).
+      getFilterValue: { value: filterValues, size: 4 },
     },
   }
 
@@ -195,6 +237,27 @@ export function buildFireLayers({
         minPx: 1.15,
         maxPx: 22,
         opacity: 0.9 * pointPresence,
+      }),
+
+    // Gentle breathing halo on the highest-FRP fires (§6). Only 16 instances —
+    // the per-frame cost is one tiny uniform-only layer update.
+    showPoints &&
+      igniteEase >= 1 &&
+      new ScatterplotLayer<PulsePoint, { beforeId?: string }>({
+        id: 'fire-pulse',
+        beforeId,
+        data: topFires(data),
+        getPosition: (d: PulsePoint) => d.position,
+        getFillColor: (d: PulsePoint) => [d.color[0], d.color[1], d.color[2], 255],
+        getRadius: (d: PulsePoint) => d.radius,
+        radiusUnits: 'meters' as const,
+        radiusScale: 2.2 + 0.9 * Math.sin(pulse * Math.PI * 2),
+        radiusMinPixels: 5,
+        radiusMaxPixels: 64,
+        stroked: false,
+        pickable: false,
+        opacity: 0.1 + 0.05 * Math.sin(pulse * Math.PI * 2),
+        parameters: { ...ADDITIVE_BLEND, depthCompare },
       }),
   ]
 
