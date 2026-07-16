@@ -231,3 +231,25 @@ for debugging.
   counting changed pixels: before ≈2 500–3 100 per step (wildly varying =
   stochastic popping); after ≈1 400 constant (pure rotation shift). Lit-pixel
   totals within 1% (occlusion intact); high-zoom alignment unchanged.
+
+## Camera locked north-up / unpitched (post-Phase 5)
+
+- **Symptom** (user report + screenshot): rotate the globe on a phone and the
+  fire points stop sticking to their locations — the whole field detaches
+  from the basemap.
+- **Cause**: deck.gl's globe integration builds its own `GlobeViewport` from
+  MapLibre's view state, and that viewport's view matrix is constructed from
+  latitude/longitude only — **bearing and pitch are silently ignored**
+  (verified in `@deck.gl/core` source; measured 73 px of misregistration at
+  bearing 25°, 48 px at pitch 30°). MapLibre's globe happily applies both
+  from two-finger touch gestures, so the basemap rotates while the fires
+  render north-up.
+- **Fix**: constrain the camera to what the fire renderer can draw —
+  `maxPitch: 0`, `dragRotate: false`, `pitchWithRotate: false`,
+  `touchPitch: false`, plus `touchZoomRotate.disableRotation()` and
+  `keyboard.disableRotation()` on load. Nothing in Ember ever sets bearing or
+  pitch (no compass UI, deep links don't carry them, idle rotation only moves
+  the center), so this loses no capability. Applied in both projections for
+  gesture consistency, though flat mercator would technically render rotation
+  fine. Revisit only if deck's `GlobeViewport` gains bearing/pitch support.
+- Not the 25 km splat lift: measured lift parallax at world zoom is <1 px.

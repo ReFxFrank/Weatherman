@@ -396,9 +396,23 @@ export function EmberMap({
       }
       minZoom={0.4}
       maxZoom={15}
+      // The camera is locked north-up and unpitched: deck.gl's globe viewport
+      // has no bearing/pitch support (its view matrix is built from
+      // latitude/longitude only), so any rotation MapLibre applied would
+      // detach the fire field from the basemap — fires rendered north-up over
+      // a rotated globe (user bug report). Nothing in Ember uses bearing or
+      // pitch, so constrain the gestures instead of the renderer.
+      maxPitch={0}
+      dragRotate={false}
+      pitchWithRotate={false}
+      touchPitch={false}
       mapStyle={BASEMAP_STYLES[basemap]}
       onLoad={(e) => {
         const map = e.target as MapLibreMap
+        // Constructor props above cover drag/pitch; these two handlers keep
+        // two-finger twist and Shift+arrow keys from setting a bearing.
+        map.touchZoomRotate.disableRotation()
+        map.keyboard.disableRotation()
         styleMapForSpace(map, styleStateRef.current.projection)
         // Native layers must exist before deck layers anchor to them via
         // beforeId — create them (empty if data is pending) pre-render.
