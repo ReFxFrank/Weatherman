@@ -197,14 +197,15 @@ export function EmberMap({
   // Entrance: once the globe is up and data has arrived, ease down from orbit
   // onto the hardest-burning longitude while the fires ignite (§5.7).
   useEffect(() => {
-    if (!mapLoaded || !data || entranceStarted.current) return
+    if (!mapLoaded || !full || entranceStarted.current) return
     const map = mapRef.current?.getMap()
     if (!map) return
     entranceStarted.current = true
 
     if (jump) return // dev override: already in place, fully ignited
 
-    const target = fireCenter(data.positions, data.frp)
+    // fireCenter expects the decoded 2-stride positions (derived is 3-stride)
+    const target = fireCenter(full.positions, full.frp)
     if (reducedMotion()) {
       map.jumpTo({ center: [target.lon, target.lat], zoom: 1.95 })
       setIgnite(1)
@@ -228,7 +229,7 @@ export function EmberMap({
       cancelFly()
       cancelAnimationFrame(raf)
     }
-  }, [mapLoaded, data, jump])
+  }, [mapLoaded, full, jump])
 
   // Idle auto-rotation, armed only after the entrance has settled.
   useEffect(() => {

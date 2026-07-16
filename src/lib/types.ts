@@ -27,7 +27,8 @@ export interface FireData {
   meta: PayloadMeta
   /** points actually rendered (may be decimated below meta.count by quality tier) */
   count: number
-  /** [lon, lat] interleaved */
+  /** [lon, lat, liftMeters] interleaved — lifted off the globe surface so
+   *  splats never depth-fight the basemap tile mesh (see binary.ts) */
   positions: Float32Array
   frp: Float32Array
   /** epoch seconds UTC */

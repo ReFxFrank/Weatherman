@@ -77,7 +77,7 @@ export interface FireLayerOpts {
 }
 
 interface PulsePoint {
-  position: [number, number]
+  position: [number, number, number]
   color: [number, number, number]
   radius: number
   /** [frp, conf, night, ageDays] — the pulse layer must obey the same GPU
@@ -108,7 +108,7 @@ function topFires(data: FireData): PulsePoint[] {
     top.pop()
   }
   cached = top.map((i) => ({
-    position: [positions[i * 2], positions[i * 2 + 1]] as [number, number],
+    position: [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]] as [number, number, number],
     color: [colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2]] as [number, number, number],
     radius: radii[i],
     filterValue: [
@@ -159,7 +159,7 @@ export function buildFireLayers({
   const sharedData = {
     length: count,
     attributes: {
-      getPosition: { value: positions, size: 2 },
+      getPosition: { value: positions, size: 3 },
       getFillColor: { value: colors, size: 4, normalized: true },
       getRadius: { value: radii, size: 1 },
       // size MUST match the extension's filterSize (4) — a mismatched stride

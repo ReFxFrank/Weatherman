@@ -212,3 +212,22 @@ for debugging.
   verified in the headless build environment. When wanted: `npm create
   tauri-app`, point `distDir` at `dist/`, run the Hono proxy as a sidecar (or
   ship the static-data build). The SPA needs no code changes.
+
+## Depth-fighting flicker fix (post-Phase 5)
+
+- **Symptom** (user video): at world zoom — first load and fully zoomed out —
+  individual fire splats blinked on/off as the globe rotated. Frame diffs
+  showed per-splat popping concentrated on the fire field while the basemap
+  barely changed; only below the z4.5 depth-release threshold.
+- **Cause**: splats sat *exactly* on the globe surface, so every fragment
+  depth-tested against MapLibre's triangulated tile mesh. The mesh's
+  interpolated depth wobbles vs deck's exact projection as the camera moves,
+  so each splat's test flips pass/fail frame to frame — classic z-fighting.
+- **Fix**: lift all splats 25 km off the surface (`SPLAT_LIFT_M` in
+  `lib/binary.ts`; derived positions are now `[lon, lat, lift]`). 0.4% of
+  Earth's radius — geometrically invisible, far beyond the mesh error, and
+  far-side points stay correctly occluded by the globe itself.
+- **Verified** with a SwiftShader harness stepping rotation 0.07°/frame and
+  counting changed pixels: before ≈2 500–3 100 per step (wildly varying =
+  stochastic popping); after ≈1 400 constant (pure rotation shift). Lit-pixel
+  totals within 1% (occlusion intact); high-zoom alignment unchanged.

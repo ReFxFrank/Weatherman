@@ -39,6 +39,15 @@ export function decodeFireBinary(buf: ArrayBuffer): DecodedFire {
  * once per payload + quality tier, so deck.gl uploads ready-made buffers
  * instead of calling JS accessors 187k times per layer update (§8).
  */
+/**
+ * Fire splats are lifted slightly off the globe so they never depth-fight the
+ * basemap's tile mesh (whose interpolated depth wobbles vs deck's exact
+ * projection as the camera moves — visible as per-splat flicker at world
+ * zoom). 25 km is 0.4% of Earth's radius: geometrically invisible, but far
+ * beyond the mesh error, and far-side points stay correctly occluded.
+ */
+const SPLAT_LIFT_M = 25_000
+
 export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
   // The hottest fires must never be decimated away: the stats panel's top-5
   // jump-to has to land on a rendered point (review finding), and they're the
@@ -47,20 +56,28 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
   const base = stride > 1 ? Math.ceil(d.count / stride) : d.count
   const cap = base + (stride > 1 ? TOP_KEEP : 0)
 
-  const positions = stride > 1 ? new Float32Array(cap * 2) : d.positions
+  const positions = new Float32Array(cap * 3)
   const frp = stride > 1 ? new Float32Array(cap) : d.frp
   const tsSec = stride > 1 ? new Uint32Array(cap) : d.tsSec
   const bright = stride > 1 ? new Float32Array(cap) : d.bright
   const conf = stride > 1 ? new Uint8Array(cap) : d.conf
   const night = stride > 1 ? new Uint8Array(cap) : d.night
   let n = base
+  if (stride === 1) {
+    for (let i = 0; i < base; i++) {
+      positions[i * 3] = d.positions[i * 2]
+      positions[i * 3 + 1] = d.positions[i * 2 + 1]
+      positions[i * 3 + 2] = SPLAT_LIFT_M
+    }
+  }
   if (stride > 1) {
     // Stride sampling keeps global coverage (FIRMS rows are orbit-ordered, so
     // taking the first N would bias one hemisphere).
     let j = 0
     for (let i = 0; j < base; i += stride, j++) {
-      positions[j * 2] = d.positions[i * 2]
-      positions[j * 2 + 1] = d.positions[i * 2 + 1]
+      positions[j * 3] = d.positions[i * 2]
+      positions[j * 3 + 1] = d.positions[i * 2 + 1]
+      positions[j * 3 + 2] = SPLAT_LIFT_M
       frp[j] = d.frp[i]
       tsSec[j] = d.tsSec[i]
       bright[j] = d.bright[i]
@@ -79,8 +96,9 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
       if (top.length > TOP_KEEP) top.pop()
     }
     for (const i of top) {
-      positions[j * 2] = d.positions[i * 2]
-      positions[j * 2 + 1] = d.positions[i * 2 + 1]
+      positions[j * 3] = d.positions[i * 2]
+      positions[j * 3 + 1] = d.positions[i * 2 + 1]
+      positions[j * 3 + 2] = SPLAT_LIFT_M
       frp[j] = d.frp[i]
       tsSec[j] = d.tsSec[i]
       bright[j] = d.bright[i]
@@ -114,7 +132,7 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
   return {
     meta: d.meta,
     count: n,
-    positions: positions.length === n * 2 ? positions : positions.subarray(0, n * 2),
+    positions: positions.length === n * 3 ? positions : positions.subarray(0, n * 3),
     frp: frp.length === n ? frp : frp.subarray(0, n),
     tsSec: tsSec.length === n ? tsSec : tsSec.subarray(0, n),
     bright: bright.length === n ? bright : bright.subarray(0, n),
