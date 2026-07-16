@@ -12,8 +12,8 @@ real data only.
 |---|---|---|
 | **0 — Scaffold & spike** | Globe + atmosphere + starfield, live FIRMS world data on a deck.gl scatterplot, Path A proxy stub | ✅ done |
 | **1 — Rendering engine + wow core** | heat-field↔points cross-fade, additive splat glow ("fires as light"), quality tiers, binary payloads, cinematic entrance, idle rotation | ✅ done |
-| 2 — Controls & filters | source/FRP/confidence/day-night filters, layer toggles | ⏳ next |
-| 3 — Time & named events | time slider + playback, EONET events, auto-refresh | — |
+| **2 — Controls & filters** | glassy filter panel: source switcher, FRP/confidence/day-night GPU filters, layer toggles, globe/flat, basemap, quality | ✅ done |
+| 3 — Time & named events | time slider + playback, EONET events, auto-refresh | ⏳ next |
 | 4 — Panels, detail, polish | stats, detail cards, terminator, responsive | — |
 
 ## Stack

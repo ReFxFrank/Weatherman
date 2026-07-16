@@ -1,7 +1,9 @@
 import type { Layer } from '@deck.gl/core'
 import { ScatterplotLayer } from '@deck.gl/layers'
+import { DataFilterExtension, type DataFilterExtensionProps } from '@deck.gl/extensions'
 import type { FireData } from './types'
 import type { QualityConfig } from './quality'
+import type { DayNight } from '../store'
 
 /**
  * The two-tier hotspot renderer (§5.1) with the §5.7 "fires as light" look,
@@ -15,6 +17,9 @@ import type { QualityConfig } from './quality'
  * - High zoom → discrete detections: FRP-sized, FRP-colored cores with up to
  *   two halo passes so clusters shimmer and bleed light (the bloom treatment).
  * - The tiers cross-fade over a zoom band around HEAT_TO_POINTS_ZOOM.
+ *
+ * All filters (§5.3) run on the GPU via DataFilterExtension — a filter change
+ * is a uniform update, never an attribute rebuild or refetch.
  */
 
 /** Additive light blending: fire accumulates brightness over the dark earth. */
@@ -37,6 +42,9 @@ const ADDITIVE_BLEND = {
  */
 const DEPTH_RELEASE_ZOOM = 4.5
 
+/** One shared extension instance: [frp, conf, night] per point. */
+const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 3 })]
+
 /** 0→1 as x goes from e0→e1. */
 function smoothstep(e0: number, e1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
@@ -45,16 +53,33 @@ function smoothstep(e0: number, e1: number, x: number): number {
 
 export const HEAT_TO_POINTS_ZOOM = 5 // §5.1 swap threshold, cross-faded ±0.7
 
+export interface FireFilters {
+  frpMin: number
+  confMin: 0 | 1 | 2
+  dayNight: DayNight
+}
+
 export interface FireLayerOpts {
   data: FireData
   zoom: number
   quality: QualityConfig
+  filters: FireFilters
+  showHeat: boolean
+  showPoints: boolean
   /** entrance ignition progress 0→1 (1 once the intro has played) */
   ignite: number
 }
 
-export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts): Layer[] {
-  const { count, positions, colors, radii } = data
+export function buildFireLayers({
+  data,
+  zoom,
+  quality,
+  filters,
+  showHeat,
+  showPoints,
+  ignite,
+}: FireLayerOpts): Layer[] {
+  const { count, positions, colors, radii, filterValues } = data
 
   // Cross-fade band around the swap threshold (§5.1: no hard cut).
   const swap = smoothstep(HEAT_TO_POINTS_ZOOM - 0.7, HEAT_TO_POINTS_ZOOM + 0.7, zoom)
@@ -72,15 +97,24 @@ export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts):
       getPosition: { value: positions, size: 2 },
       getFillColor: { value: colors, size: 4, normalized: true },
       getRadius: { value: radii, size: 1 },
+      getFilterValue: { value: filterValues, size: 3 },
     },
   }
+
+  const nightRange: [number, number] =
+    filters.dayNight === 'day' ? [0, 0] : filters.dayNight === 'night' ? [1, 1] : [0, 1]
+  const filterRange: [number, number][] = [
+    [filters.frpMin, 1e9],
+    [filters.confMin, 2],
+    nightRange,
+  ]
 
   const depthCompare = zoom > DEPTH_RELEASE_ZOOM ? ('always' as const) : ('less-equal' as const)
   const splat = (
     id: string,
     o: { radiusScale: number; minPx: number; maxPx: number; opacity: number },
   ) =>
-    new ScatterplotLayer({
+    new ScatterplotLayer<unknown, DataFilterExtensionProps>({
       id,
       data: sharedData,
       radiusUnits: 'meters' as const,
@@ -92,13 +126,16 @@ export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts):
       pickable: false,
       opacity: o.opacity * igniteEase,
       parameters: { ...ADDITIVE_BLEND, depthCompare },
+      extensions: FILTER_EXTENSIONS,
+      filterRange,
     })
 
   const layers: (Layer | false)[] = [
     // -- Tier 1: world-scale heat field — wide faint splats sum into blooms --
     // Alphas are tuned for the full ~190k-point set: dense burn belts should
     // reach white-hot only at their cores, not swallow whole regions.
-    heatPresence > 0.02 &&
+    showHeat &&
+      heatPresence > 0.02 &&
       splat('fire-heatfield', {
         radiusScale: 3.8,
         minPx: quality.heatMinPx,
@@ -108,7 +145,8 @@ export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts):
 
     // -- Tier 2: discrete glowing detections ---------------------------------
     // Outer halo — wide, faint bleed of light around clusters (High only).
-    quality.glowPasses >= 2 &&
+    showPoints &&
+      quality.glowPasses >= 2 &&
       glowPresence > 0.02 &&
       splat('fire-glow-outer', {
         radiusScale: 6,
@@ -118,7 +156,8 @@ export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts):
       }),
 
     // Inner halo — the main glow body (High + Balanced).
-    quality.glowPasses >= 1 &&
+    showPoints &&
+      quality.glowPasses >= 1 &&
       glowPresence > 0.02 &&
       splat('fire-glow-inner', {
         radiusScale: 2.6,
@@ -127,14 +166,15 @@ export function buildFireLayers({ data, zoom, quality, ignite }: FireLayerOpts):
         opacity: 0.1 * glowPresence * pointPresence,
       }),
 
-    // Core points — always on: at world zoom they read as embers inside the
-    // heat field; past the swap they are the primary tier.
-    splat('fire-core', {
-      radiusScale: 1,
-      minPx: 1.15,
-      maxPx: 22,
-      opacity: 0.9 * pointPresence,
-    }),
+    // Core points — at world zoom they read as embers inside the heat field;
+    // past the swap they are the primary tier.
+    showPoints &&
+      splat('fire-core', {
+        radiusScale: 1,
+        minPx: 1.15,
+        maxPx: 22,
+        opacity: 0.9 * pointPresence,
+      }),
   ]
 
   return layers.filter(Boolean) as Layer[]

@@ -1,11 +1,11 @@
-import type { BinaryHeader, BinarySection, FireData } from './types'
+import type { BinaryHeader, BinarySection, DecodedFire, FireData } from './types'
 import { frpColor, frpRadiusMeters } from './colors'
 
 /**
  * Decode the proxy's binary payload (see server/index.ts wire format) into
  * typed-array columns — no JSON.parse over megabytes, no per-row objects.
  */
-export function decodeFireBinary(buf: ArrayBuffer): Omit<FireData, 'colors' | 'radii'> {
+export function decodeFireBinary(buf: ArrayBuffer): DecodedFire {
   const view = new DataView(buf)
   const headerLen = view.getUint32(0, true)
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, headerLen))) as BinaryHeader
@@ -35,11 +35,11 @@ export function decodeFireBinary(buf: ArrayBuffer): Omit<FireData, 'colors' | 'r
 }
 
 /**
- * Precompute per-point render attributes (RGBA + radius) once per payload, so
- * deck.gl uploads ready-made GPU buffers instead of calling JS accessors 187k
- * times per layer update (§8: styling on GPU, never per-point React work).
+ * Precompute per-point render attributes (RGBA, radius, GPU filter values)
+ * once per payload + quality tier, so deck.gl uploads ready-made buffers
+ * instead of calling JS accessors 187k times per layer update (§8).
  */
-export function deriveRenderAttributes(d: Omit<FireData, 'colors' | 'radii'>, stride = 1): FireData {
+export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
   const n = stride > 1 ? Math.ceil(d.count / stride) : d.count
 
   const positions = stride > 1 ? new Float32Array(n * 2) : d.positions
@@ -64,6 +64,7 @@ export function deriveRenderAttributes(d: Omit<FireData, 'colors' | 'radii'>, st
 
   const colors = new Uint8Array(n * 4)
   const radii = new Float32Array(n)
+  const filterValues = new Float32Array(n * 3)
   for (let i = 0; i < n; i++) {
     const [r, g, b] = frpColor(frp[i])
     colors[i * 4] = r
@@ -71,7 +72,10 @@ export function deriveRenderAttributes(d: Omit<FireData, 'colors' | 'radii'>, st
     colors[i * 4 + 2] = b
     colors[i * 4 + 3] = 255
     radii[i] = frpRadiusMeters(frp[i])
+    filterValues[i * 3] = frp[i]
+    filterValues[i * 3 + 1] = conf[i]
+    filterValues[i * 3 + 2] = night[i]
   }
 
-  return { meta: d.meta, count: n, positions, frp, tsSec, bright, conf, night, colors, radii }
+  return { meta: d.meta, count: n, positions, frp, tsSec, bright, conf, night, colors, radii, filterValues }
 }

@@ -13,9 +13,13 @@ import {
   reducedMotion,
   startIdleRotation,
 } from '../lib/cinematics'
+import { useEmber, type Basemap, type Projection } from '../store'
 
-/** CARTO dark-matter — zero-key vector basemap (decision log: docs/DECISIONS.md). */
-const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+/** CARTO dark styles — zero-key vector basemaps (decision log: docs/DECISIONS.md). */
+const BASEMAP_STYLES: Record<Basemap, string> = {
+  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  'dark-nolabels': 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+}
 
 const IGNITE_DELAY_MS = 600
 const IGNITE_MS = 2200
@@ -38,9 +42,9 @@ function DeckGLOverlay(props: ConstructorParameters<typeof MapboxOverlay>[0]) {
   return null
 }
 
-function styleMapForSpace(map: MapLibreMap) {
-  // Globe is the default and primary view (§5.1), with the atmosphere halo.
-  map.setProjection({ type: 'globe' })
+/** Space look: globe (or flat) projection, atmosphere, deep-navy re-tint. */
+function styleMapForSpace(map: MapLibreMap, projection: Projection) {
+  map.setProjection({ type: projection })
   map.setSky({
     'sky-color': '#0a1430',
     'sky-horizon-blend': 0.6,
@@ -78,6 +82,20 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
   const [cameraSettled, setCameraSettled] = useState(Boolean(jump))
   const entranceStarted = useRef(false)
 
+  const frpMin = useEmber((s) => s.frpMin)
+  const confMin = useEmber((s) => s.confMin)
+  const dayNight = useEmber((s) => s.dayNight)
+  const showHeat = useEmber((s) => s.showHeat)
+  const showPoints = useEmber((s) => s.showPoints)
+  const projection = useEmber((s) => s.projection)
+  const basemap = useEmber((s) => s.basemap)
+
+  // Keep the current projection visible to the style.load handler without
+  // re-registering it (a basemap switch replaces the whole style, wiping the
+  // projection, sky and our re-tint — they must be re-applied).
+  const projectionRef = useRef(projection)
+  projectionRef.current = projection
+
   // Entrance: once the globe is up and data has arrived, ease down from orbit
   // onto the hardest-burning longitude while the fires ignite (§5.7).
   useEffect(() => {
@@ -90,15 +108,12 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
 
     const target = fireCenter(data.positions, data.frp)
     if (reducedMotion()) {
-      if (import.meta.env.DEV) console.debug('[ember] entrance: reduced-motion jump', target)
       map.jumpTo({ center: [target.lon, target.lat], zoom: 1.95 })
       setIgnite(1)
       setCameraSettled(true)
       return
     }
 
-    if (import.meta.env.DEV)
-      console.debug('[ember] entrance: fly from', map.getCenter().toArray(), map.getZoom(), '→', target)
     const cancelFly = flyEntrance(map, target)
     const t0 = performance.now() + IGNITE_DELAY_MS
     let raf = requestAnimationFrame(function tick(now: number) {
@@ -125,9 +140,26 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
     return startIdleRotation(map)
   }, [cameraSettled])
 
+  // Projection toggle (§5.1: globe default, flat for regional drill-down).
+  useEffect(() => {
+    if (!mapLoaded) return
+    mapRef.current?.getMap()?.setProjection({ type: projection })
+  }, [projection, mapLoaded])
+
   const layers = useMemo(
-    () => (data ? buildFireLayers({ data, zoom, quality, ignite }) : []),
-    [data, zoom, quality, ignite],
+    () =>
+      data
+        ? buildFireLayers({
+            data,
+            zoom,
+            quality,
+            filters: { frpMin, confMin, dayNight },
+            showHeat,
+            showPoints,
+            ignite,
+          })
+        : [],
+    [data, zoom, quality, frpMin, confMin, dayNight, showHeat, showPoints, ignite],
   )
 
   return (
@@ -140,10 +172,13 @@ export function EmberMap({ data, quality }: { data: FireData | undefined; qualit
       }
       minZoom={0.4}
       maxZoom={15}
-      mapStyle={BASEMAP_STYLE}
+      mapStyle={BASEMAP_STYLES[basemap]}
       onLoad={(e) => {
         const map = e.target as MapLibreMap
-        styleMapForSpace(map)
+        styleMapForSpace(map, projectionRef.current)
+        // Any later style swap (basemap switch) rebuilds from scratch —
+        // re-apply projection, sky and tint when the new style lands.
+        map.on('style.load', () => styleMapForSpace(map, projectionRef.current))
         if (import.meta.env.DEV) {
           // test hook: lets headless verification read camera state
           ;(window as unknown as { __emberMap?: MapLibreMap }).__emberMap = map

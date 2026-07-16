@@ -100,6 +100,8 @@ export function startIdleRotation(map: MapLibreMap, opts: RotationOpts = {}): ()
     if (Date.now() - lastInteraction < idleAfterMs) return
     if (map.isMoving() && !rotating) return // a user/ease animation is in flight
     if (map.getZoom() > maxZoom) return
+    // Spinning a flat map reads as a glitch, not a globe — only rotate the globe.
+    if (map.getProjection()?.type !== 'globe') return
     rotating = true
     const c = map.getCenter()
     c.lng += (degPerSec * dt) / 1000

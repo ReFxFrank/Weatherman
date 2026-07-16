@@ -41,4 +41,9 @@ export interface FireData {
   colors: Uint8Array
   /** derived radius per point, meters */
   radii: Float32Array
+  /** derived [frp, conf, night] triplets for the GPU DataFilterExtension */
+  filterValues: Float32Array
 }
+
+/** Decoded payload before render attributes are derived. */
+export type DecodedFire = Omit<FireData, 'colors' | 'radii' | 'filterValues'>

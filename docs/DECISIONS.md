@@ -100,6 +100,17 @@ for debugging.
   `?quality=` or `localStorage['ember-quality']`; panel UI lands in Phase 2.
 - Dev/test URL params: `?quality=` `?stride=` `?lat=&lon=&z=` (camera jump, skips
   entrance) `?debug=1` (fps + render counts in the HUD).
+- Filters (Phase 2) run through deck.gl's `DataFilterExtension` with a
+  `[frp, conf, night]` triplet per point uploaded once — a filter change is a
+  GPU uniform update. Verified: filter changes issue zero network requests;
+  only source/days changes refetch (and hit the react-query + proxy caches on
+  repeat). Quality switches re-derive attributes from the cached payload
+  without refetching.
+- Basemap switching swaps the whole MapLibre style, which wipes projection,
+  sky and the navy re-tint — a `style.load` listener re-applies all three.
+  Idle rotation checks the live projection and only spins the globe.
+- Suomi NPP's public 24h feed is currently near-empty (aging satellite,
+  data gaps) — the UI just shows a low/zero count; not a bug.
 - Confidence normalization: VIIRS `l/n/h` *and* the public feeds' `low/nominal/high`
   words *and* MODIS numeric (`<30` → low, `30–79` → nominal, `≥80` → high) all map
   to one internal 0/1/2 scale.
