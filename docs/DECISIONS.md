@@ -51,11 +51,55 @@ Proxy is plain Hono, so all three candidates work: Vercel function, CF Pages+Wor
 (cache moves to edge KV), or a VPS Node service. Recommendation: decide by Phase 4;
 Vercel is the least-friction default for a Vite SPA + one API route.
 
+## 7. Bloom: splat glow instead of `PostProcessEffect` (Phase 1)
+
+The brief specifies both **interleaved** deck.gl rendering (§2) and a
+**`PostProcessEffect` bloom pass** (§5.7). These turn out to be mutually
+exclusive: in interleaved mode deck draws into MapLibre's own framebuffer
+mid-frame (`_customRender`), so there is no separate deck framebuffer for a
+screen-space post-process to read. Verified empirically — and `HeatmapLayer`'s
+aggregation passes fail to bind in interleaved mode too (`weightsTexture`
+warning, nothing renders).
+
+Resolution, favoring the specified architecture (interleaved is also what makes
+far-side-of-globe occlusion correct):
+
+- **Bloom look** = per-point additive light splats: a core pass plus up to two
+  halo passes (High: 2, Balanced: 1, Performance: 0). Dense clusters sum on the
+  GPU into blooming, bleeding light — same visual mechanism as screen bloom,
+  cheaper, and globe-safe.
+- **Heat tier** = the same splats drawn wide/faint at low zoom (a GPU
+  kernel-density heatmap), cross-faded into discrete points across the §5.1
+  swap band instead of a `HeatmapLayer`.
+
+**To change it:** an overlaid (non-interleaved) `MapboxOverlay` would enable a
+true screen-space `PostProcessEffect` at the cost of depth-correct globe
+occlusion; say the word and it can be built as a High-tier variant.
+
+## 8. Binary wire format (Phase 1)
+
+`/api/hotspots` returns `uint32 header-length + JSON header + 4-byte-aligned
+typed-array sections` (positions f32×2, frp f32, tsSec u32, bright f32, conf u8,
+night u8). 4.1 MB vs 9.1 MB as JSON for 187k points, zero client-side parsing —
+buffers go straight into deck.gl as binary attributes. `?format=json` remains
+for debugging.
+
 ## Other notes
 
 - **React 18** pinned per the brief (not 19).
 - deck.gl mounts through `MapboxOverlay` in **interleaved** mode over MapLibre's
   globe projection (deck.gl ≥ 9.1 supports this pairing).
+- Splats keep the map's depth **test** at globe zooms (far-side occlusion) and
+  release it past zoom 4.5, where large billboard quads would otherwise clip
+  into the curved surface ("crescent" artifact); depth **write** stays off so
+  translucent splats never mask each other.
+- Quality tiers (§8): High / Balanced / Performance scale glow passes, heat-field
+  kernel size and point decimation (stride sampling to keep global coverage).
+  Auto-detected from the WebGL renderer string (software rasterizers →
+  Performance, discrete/Apple GPUs → High, else Balanced), overridable via
+  `?quality=` or `localStorage['ember-quality']`; panel UI lands in Phase 2.
+- Dev/test URL params: `?quality=` `?stride=` `?lat=&lon=&z=` (camera jump, skips
+  entrance) `?debug=1` (fps + render counts in the HUD).
 - Confidence normalization: VIIRS `l/n/h` *and* the public feeds' `low/nominal/high`
   words *and* MODIS numeric (`<30` → low, `30–79` → nominal, `≥80` → high) all map
   to one internal 0/1/2 scale.

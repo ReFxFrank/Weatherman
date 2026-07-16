@@ -1,13 +1,35 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Map, { useControl } from 'react-map-gl/maplibre'
-import type { MapLibreEvent } from 'maplibre-gl'
+import type { MapRef } from 'react-map-gl/maplibre'
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import { ScatterplotLayer } from '@deck.gl/layers'
-import type { HotspotResponse } from '../lib/types'
-import { frpColor, frpRadiusPx } from '../lib/colors'
+import type { FireData } from '../lib/types'
+import type { QualityConfig } from '../lib/quality'
+import { buildFireLayers } from '../lib/fireLayers'
+import {
+  ENTRANCE_START,
+  fireCenter,
+  flyEntrance,
+  reducedMotion,
+  startIdleRotation,
+} from '../lib/cinematics'
 
 /** CARTO dark-matter — zero-key vector basemap (decision log: docs/DECISIONS.md). */
 const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
+const IGNITE_DELAY_MS = 600
+const IGNITE_MS = 2200
+
+/** Dev/test camera override: ?lat=&lon=&z= jumps straight there, no entrance. */
+function cameraOverride(): { lon: number; lat: number; z: number } | null {
+  const q = new URLSearchParams(location.search)
+  const raw = { lat: q.get('lat'), lon: q.get('lon'), z: q.get('z') }
+  if (raw.lat === null || raw.lon === null || raw.z === null) return null
+  const lat = Number(raw.lat)
+  const lon = Number(raw.lon)
+  const z = Number(raw.z)
+  return Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(z) ? { lon, lat, z } : null
+}
 
 function DeckGLOverlay(props: ConstructorParameters<typeof MapboxOverlay>[0]) {
   // MapboxOverlay implements maplibre's IControl, so react-map-gl can mount it.
@@ -16,9 +38,7 @@ function DeckGLOverlay(props: ConstructorParameters<typeof MapboxOverlay>[0]) {
   return null
 }
 
-function onMapLoad(e: MapLibreEvent) {
-  const map = e.target
-
+function styleMapForSpace(map: MapLibreMap) {
   // Globe is the default and primary view (§5.1), with the atmosphere halo.
   map.setProjection({ type: 'globe' })
   map.setSky({
@@ -49,35 +69,88 @@ function onMapLoad(e: MapLibreEvent) {
   }
 }
 
-export function EmberMap({ data }: { data: HotspotResponse | undefined }) {
-  const layers = useMemo(() => {
-    if (!data) return []
-    const { columns, count } = data
-    return [
-      // Phase 0: raw dump of every detection. Heatmap↔scatter swap, additive
-      // "fires as light" blending and bloom arrive in Phase 1.
-      new ScatterplotLayer({
-        id: 'firms-hotspots',
-        data: { length: count },
-        getPosition: (_: unknown, { index }: { index: number }) => [columns.lon[index], columns.lat[index]],
-        getFillColor: (_: unknown, { index }: { index: number }) => frpColor(columns.frp[index]),
-        getRadius: (_: unknown, { index }: { index: number }) => frpRadiusPx(columns.frp[index]),
-        radiusUnits: 'pixels',
-        radiusMinPixels: 1,
-        stroked: false,
-        pickable: false,
-        opacity: 0.85,
-      }),
-    ]
-  }, [data])
+export function EmberMap({ data, quality }: { data: FireData | undefined; quality: QualityConfig }) {
+  const mapRef = useRef<MapRef>(null)
+  const jump = useMemo(cameraOverride, [])
+  const [mapLoaded, setMapLoaded] = useState(false)
+  const [zoom, setZoom] = useState(jump ? jump.z : ENTRANCE_START.zoom)
+  const [ignite, setIgnite] = useState(jump ? 1 : 0)
+  const [cameraSettled, setCameraSettled] = useState(Boolean(jump))
+  const entranceStarted = useRef(false)
+
+  // Entrance: once the globe is up and data has arrived, ease down from orbit
+  // onto the hardest-burning longitude while the fires ignite (§5.7).
+  useEffect(() => {
+    if (!mapLoaded || !data || entranceStarted.current) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    entranceStarted.current = true
+
+    if (jump) return // dev override: already in place, fully ignited
+
+    const target = fireCenter(data.positions, data.frp)
+    if (reducedMotion()) {
+      if (import.meta.env.DEV) console.debug('[ember] entrance: reduced-motion jump', target)
+      map.jumpTo({ center: [target.lon, target.lat], zoom: 1.95 })
+      setIgnite(1)
+      setCameraSettled(true)
+      return
+    }
+
+    if (import.meta.env.DEV)
+      console.debug('[ember] entrance: fly from', map.getCenter().toArray(), map.getZoom(), '→', target)
+    const cancelFly = flyEntrance(map, target)
+    const t0 = performance.now() + IGNITE_DELAY_MS
+    let raf = requestAnimationFrame(function tick(now: number) {
+      const p = Math.min(1, Math.max(0, (now - t0) / IGNITE_MS))
+      setIgnite(p)
+      if (p < 1) raf = requestAnimationFrame(tick)
+    })
+    // Settle when the ease actually ends (robust on slow renderers), not on a
+    // wall-clock guess. A user interrupting the entrance also settles it.
+    const onMoveEnd = () => setCameraSettled(true)
+    map.once('moveend', onMoveEnd)
+    return () => {
+      map.off('moveend', onMoveEnd)
+      cancelFly()
+      cancelAnimationFrame(raf)
+    }
+  }, [mapLoaded, data, jump])
+
+  // Idle auto-rotation, armed only after the entrance has settled.
+  useEffect(() => {
+    if (!cameraSettled) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    return startIdleRotation(map)
+  }, [cameraSettled])
+
+  const layers = useMemo(
+    () => (data ? buildFireLayers({ data, zoom, quality, ignite }) : []),
+    [data, zoom, quality, ignite],
+  )
 
   return (
     <Map
-      initialViewState={{ longitude: 15, latitude: 12, zoom: 1.6 }}
-      minZoom={0.8}
+      ref={mapRef}
+      initialViewState={
+        jump
+          ? { longitude: jump.lon, latitude: jump.lat, zoom: jump.z }
+          : ENTRANCE_START
+      }
+      minZoom={0.4}
       maxZoom={15}
       mapStyle={BASEMAP_STYLE}
-      onLoad={onMapLoad}
+      onLoad={(e) => {
+        const map = e.target as MapLibreMap
+        styleMapForSpace(map)
+        if (import.meta.env.DEV) {
+          // test hook: lets headless verification read camera state
+          ;(window as unknown as { __emberMap?: MapLibreMap }).__emberMap = map
+        }
+        setMapLoaded(true)
+      }}
+      onMove={(e) => setZoom(e.viewState.zoom)}
       attributionControl={{ compact: true }}
       style={{ position: 'absolute', inset: 0, background: 'transparent' }}
     >

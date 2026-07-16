@@ -11,8 +11,8 @@ real data only.
 | Phase | Scope | State |
 |---|---|---|
 | **0 — Scaffold & spike** | Globe + atmosphere + starfield, live FIRMS world data on a deck.gl scatterplot, Path A proxy stub | ✅ done |
-| 1 — Rendering engine + wow core | heatmap↔points swap, additive glow, bloom, entrance animation, idle rotation | ⏳ next |
-| 2 — Controls & filters | source/FRP/confidence/day-night filters, layer toggles | — |
+| **1 — Rendering engine + wow core** | heat-field↔points cross-fade, additive splat glow ("fires as light"), quality tiers, binary payloads, cinematic entrance, idle rotation | ✅ done |
+| 2 — Controls & filters | source/FRP/confidence/day-night filters, layer toggles | ⏳ next |
 | 3 — Time & named events | time slider + playback, EONET events, auto-refresh | — |
 | 4 — Panels, detail, polish | stats, detail cards, terminator, responsive | — |
 
@@ -43,7 +43,15 @@ The Hono proxy (`server/index.ts`) serves `/api/hotspots` in one of two modes:
 
 Either way the data is live satellite output, never mocked. Responses are cached
 in-memory for 10 minutes with single-flight dedup and stale-on-error fallback, so
-one upstream fetch serves every visitor and quota is protected.
+one upstream fetch serves every visitor and quota is protected. Payloads travel
+as binary typed arrays (~4 MB for 187k points vs ~9 MB as JSON) and feed deck.gl
+directly — no client-side parsing.
+
+### Dev/test URL params
+
+`?quality=high|balanced|performance` force a quality tier · `?stride=N` decimate
+points · `?lat=&lon=&z=` jump the camera (skips the entrance) · `?debug=1` FPS +
+render counts in the HUD.
 
 ## Data attribution
 
