@@ -251,5 +251,9 @@ for debugging.
   pitch (no compass UI, deep links don't carry them, idle rotation only moves
   the center), so this loses no capability. Applied in both projections for
   gesture consistency, though flat mercator would technically render rotation
-  fine. Revisit only if deck's `GlobeViewport` gains bearing/pitch support.
+  fine (deck's `MapView`/`WebMercatorViewport` honor bearing/pitch — and
+  deck's `GlobeView` itself hands off to a `WebMercatorViewport` above z12,
+  so the bug surface is strictly globe-rendered zooms). A dev-mode `rotate`
+  listener warns if any future code path sets a bearing anyway. Revisit only
+  if deck's `GlobeViewport` gains bearing/pitch support.
 - Not the 25 km splat lift: measured lift parallax at world zoom is <1 px.

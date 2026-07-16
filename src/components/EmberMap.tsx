@@ -425,6 +425,15 @@ export function EmberMap({
           syncNativeLayers(map)
         })
         if (import.meta.env.DEV) {
+          // Tripwire (review finding): gestures are locked above, but nothing
+          // clamps a programmatic easeTo/jumpTo({bearing}) — which would
+          // silently detach the deck fire layers again. Make that loud.
+          map.on('rotate', () => {
+            if (map.getBearing() !== 0)
+              console.warn(
+                '[ember] bearing set on the north-up-locked map — deck globe layers will detach from the basemap (see DECISIONS.md)',
+              )
+          })
           // test hook: lets headless verification read camera state
           ;(window as unknown as { __emberMap?: MapLibreMap }).__emberMap = map
         }
