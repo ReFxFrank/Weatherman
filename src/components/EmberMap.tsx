@@ -8,6 +8,8 @@ import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
 import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
 import { syncTerminatorLayers } from '../lib/terminator'
+import { syncChoroplethLayer } from '../lib/choropleth'
+import { syncPerimetersLayer } from '../lib/perimeters'
 import { syncSelectionMarker } from '../lib/selectionMarker'
 import { findNearestHotspot } from '../lib/nearestHotspot'
 import { mapBus } from '../lib/mapBus'
@@ -88,6 +90,8 @@ export function EmberMap({
   events,
   quality,
   selectedIndex,
+  choropleth,
+  perimeters,
 }: {
   /** decimated render set (what deck draws) */
   data: FireData | undefined
@@ -97,6 +101,10 @@ export function EmberMap({
   quality: QualityConfig
   /** validated selection (App checks payload identity + active filters) */
   selectedIndex: number | null
+  /** country fire-count features (Phase 5), null while off/loading */
+  choropleth: GeoJSON.FeatureCollection | null
+  /** NIFC US perimeter features (Phase 5), null while off/loading */
+  perimeters: GeoJSON.FeatureCollection | null
 }) {
   const mapRef = useRef<MapRef>(null)
   const jump = useMemo(cameraOverride, [])
@@ -123,6 +131,8 @@ export function EmberMap({
   const showPoints = useEmber((s) => s.showPoints)
   const showEvents = useEmber((s) => s.showEvents)
   const showTerminator = useEmber((s) => s.showTerminator)
+  const showChoropleth = useEmber((s) => s.showChoropleth)
+  const showPerimeters = useEmber((s) => s.showPerimeters)
   const projection = useEmber((s) => s.projection)
   const basemap = useEmber((s) => s.basemap)
   const days = useEmber((s) => s.days)
@@ -154,15 +164,33 @@ export function EmberMap({
     showEvents,
     showTerminator,
     selectedPoint,
+    choropleth,
+    showChoropleth,
+    perimeters,
+    showPerimeters,
   })
-  styleStateRef.current = { projection, events, selectedEventId, showEvents, showTerminator, selectedPoint }
+  styleStateRef.current = {
+    projection,
+    events,
+    selectedEventId,
+    showEvents,
+    showTerminator,
+    selectedPoint,
+    choropleth,
+    showChoropleth,
+    perimeters,
+    showPerimeters,
+  }
 
-  /** Recreate every native layer (eonet, terminator, selection) in order. */
+  /** Recreate every native layer in stack order (bottom→top: choropleth,
+   *  terminator, perimeters, [deck fires], eonet symbols, selection ring). */
   const syncNativeLayers = (map: MapLibreMap) => {
     const s = styleStateRef.current
-    // eonet first: its icon layer is the beforeId anchor for deck + terminator
+    // eonet first: its icon layer is the beforeId anchor for deck + the rest
     syncEonetSymbols(map, s.events ?? [], s.selectedEventId, s.showEvents)
     syncTerminatorLayers(map, { beforeId: EONET_ICON_LAYER, visible: s.showTerminator })
+    syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
+    syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
     syncSelectionMarker(map, s.selectedPoint)
   }
 
@@ -238,7 +266,18 @@ export function EmberMap({
     if (!map) return
     syncNativeLayers(map)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapLoaded, events, selectedEventId, showEvents, showTerminator, selectedPoint])
+  }, [
+    mapLoaded,
+    events,
+    selectedEventId,
+    showEvents,
+    showTerminator,
+    selectedPoint,
+    choropleth,
+    showChoropleth,
+    perimeters,
+    showPerimeters,
+  ])
 
   // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {
@@ -297,6 +336,10 @@ export function EmberMap({
     if (!map) return
     mapBus.flyTo = ({ lon, lat, zoom: z }) =>
       map.flyTo({ center: [lon, lat], zoom: z, duration: 1800, essential: false })
+    mapBus.getCamera = () => {
+      const c = map.getCenter()
+      return { lon: c.lng, lat: c.lat, zoom: map.getZoom() }
+    }
     mapBus.getBounds = () => {
       try {
         const b = map.getBounds()
@@ -318,6 +361,7 @@ export function EmberMap({
     return () => {
       mapBus.flyTo = null
       mapBus.getBounds = null
+      mapBus.getCamera = null
     }
   }, [mapLoaded])
 

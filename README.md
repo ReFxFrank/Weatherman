@@ -15,6 +15,7 @@ real data only.
 | **2 — Controls & filters** | glassy filter panel: source switcher, FRP/confidence/day-night GPU filters, layer toggles, globe/flat, basemap, quality | ✅ done |
 | **3 — Time & named events** | 1–10d window + histogram timeline + day-by-day playback (GPU age filter), EONET named events with detail cards, 10-min auto-refresh | ✅ done |
 | **4 — Panels, detail, polish** | live stats panel, hotspot detail cards + selection ring, real-time terminator with twilight bands, legend, Photon search, top-FRP pulse, error/empty/stale states, mobile bottom sheet | ✅ done |
+| **5 — Stretch** | shareable deep links, CSV/GeoJSON export of the current view, country fire-count choropleth (Natural Earth), US perimeters (NIFC/WFIGS) | ✅ done (EU perimeters + Tauri deferred, see DECISIONS) |
 
 ## Stack
 
@@ -112,11 +113,14 @@ or nginx+certbot in front. Code updates: `git pull && npm ci && npm run build
 The Hono app in `server/index.ts` ports to Vercel functions or CF Workers
 unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 
-### Dev/test URL params
+### Deep links & dev params
 
-`?quality=high|balanced|performance` force a quality tier · `?stride=N` decimate
-points · `?lat=&lon=&z=` jump the camera (skips the entrance) · `?debug=1` FPS +
-render counts in the HUD.
+The URL mirrors the view — copy the address bar to share it:
+`?lat=&lon=&z=` camera (skips the entrance) · `?source=` · `?days=1..10` ·
+`?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
+
+Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
+`?stride=N` decimate points · `?debug=1` FPS/quota/render counts in the HUD.
 
 ## Data attribution
 

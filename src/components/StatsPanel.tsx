@@ -1,4 +1,4 @@
-import { BarChart3, ChevronRight, Flame, Globe2, Zap } from 'lucide-react'
+import { BarChart3, ChevronRight, Download, Flame, Globe2, Zap } from 'lucide-react'
 import type { FireStats } from '../lib/stats'
 import { setEmber, useEmber } from '../store'
 import { glass, Section } from './ui'
@@ -14,6 +14,8 @@ interface StatsProps {
   /** detections newer than the previous refresh (null until a second fetch lands) */
   newSince: { count: number; sinceIso: string } | null
   onJumpTo: (t: { index: number; lon: number; lat: number }) => void
+  /** Phase 5: download the current view's detections */
+  onExport: (format: 'csv' | 'geojson') => void
 }
 
 /** FRP in MW: 1 decimal under 100, integer above. */
@@ -27,7 +29,7 @@ const fmtUtcHm = (iso: string) => {
 const NoData = () => <p className="px-1 font-mono text-[11px] text-slate-600">no data</p>
 
 /** Inner sections — shared by the desktop panel and the mobile bottom sheet. */
-export function StatsContent({ stats, newSince, onJumpTo }: StatsProps) {
+export function StatsContent({ stats, newSince, onJumpTo, onExport }: StatsProps) {
   if (!stats) {
     return (
       <Section icon={Flame} title="ACTIVE FIRES">
@@ -105,6 +107,25 @@ export function StatsContent({ stats, newSince, onJumpTo }: StatsProps) {
             </button>
           ))
         )}
+      </Section>
+
+      <Section icon={Download} title="EXPORT VIEW">
+        <div className="flex gap-2 px-1">
+          {(['csv', 'geojson'] as const).map((format) => (
+            <button
+              key={format}
+              type="button"
+              onClick={() => onExport(format)}
+              title={`Download the detections currently in view as ${format.toUpperCase()}`}
+              className="flex-1 rounded border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-300 transition-colors hover:border-amber-500/40 hover:text-amber-300"
+            >
+              {format}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 px-1 text-[9px] leading-snug text-slate-600">
+          filtered detections in the current viewport
+        </p>
       </Section>
     </>
   )

@@ -115,6 +115,18 @@ export function FilterContent({ eventsCount }: { eventsCount?: number }) {
           label="Night shade"
           note="real-time"
         />
+        <Toggle
+          checked={s.showChoropleth}
+          onChange={(showChoropleth) => setEmber({ showChoropleth })}
+          label="Country counts"
+          note="choropleth"
+        />
+        <Toggle
+          checked={s.showPerimeters}
+          onChange={(showPerimeters) => setEmber({ showPerimeters })}
+          label="US perimeters"
+          note="NIFC"
+        />
       </Section>
 
       <Section icon={GlobeIcon} title="VIEW">

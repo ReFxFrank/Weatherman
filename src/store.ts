@@ -33,6 +33,10 @@ export interface EmberState {
   showHeat: boolean
   showPoints: boolean
   showEvents: boolean
+  /** country-level fire-count choropleth (Phase 5, lazy-loaded) */
+  showChoropleth: boolean
+  /** US wildfire perimeters from NIFC/WFIGS (Phase 5, lazy-loaded) */
+  showPerimeters: boolean
   projection: Projection
   basemap: Basemap
   quality: QualityTier
@@ -57,6 +61,24 @@ export interface EmberState {
   viewEpoch: number
 }
 
+/** Shareable deep links (Phase 5): filters/source/window read from the URL.
+ *  The camera (?lat/lon/z) is handled by EmberMap's cameraOverride. */
+function stateFromUrl(): Partial<EmberState> {
+  const q = new URLSearchParams(location.search)
+  const out: Partial<EmberState> = {}
+  const source = q.get('source')
+  if (source && SOURCES.some((s) => s.id === source)) out.source = source as SourceId
+  const days = Number(q.get('days'))
+  if (Number.isInteger(days) && days >= 1 && days <= 10) out.days = days
+  const frp = Number(q.get('frp'))
+  if (Number.isFinite(frp) && frp > 0) out.frpMin = Math.min(frp, 1000)
+  const conf = q.get('conf')
+  if (conf === '1' || conf === '2') out.confMin = Number(conf) as 1 | 2
+  const dn = q.get('dn')
+  if (dn === 'day' || dn === 'night') out.dayNight = dn
+  return out
+}
+
 export const useEmber = create<EmberState>(() => ({
   source: 'VIIRS_NOAA20_NRT',
   days: 1,
@@ -66,6 +88,8 @@ export const useEmber = create<EmberState>(() => ({
   showHeat: true,
   showPoints: true,
   showEvents: true,
+  showChoropleth: false,
+  showPerimeters: false,
   projection: 'globe',
   basemap: 'dark',
   quality: detectQualityTier(),
@@ -78,6 +102,7 @@ export const useEmber = create<EmberState>(() => ({
   showTerminator: true,
   sheet: null,
   viewEpoch: 0,
+  ...stateFromUrl(),
 }))
 
 export function setEmber(partial: Partial<EmberState>) {

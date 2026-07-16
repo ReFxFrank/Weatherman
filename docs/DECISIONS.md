@@ -189,3 +189,26 @@ for debugging.
   the payload in Phase 4 when detail cards need it.
 - Fire perimeters (§3.3): **deferred** per the brief's own recommendation — stretch
   only, revisit at Phase 5.
+
+## Phase 5 notes
+
+- **Deep links**: the URL mirrors camera + source + window + filters via
+  `history.replaceState` (debounced through the store subscription); loading a
+  shared URL jumps straight to the view with filters applied. Unrelated params
+  (`?debug`, `?quality`, `?stride`) are preserved.
+- **Export**: CSV/GeoJSON of the detections actually visible (filters + time
+  window + viewport), capped at 250k rows, via the shared filter predicate in
+  `lib/stats.ts` so exports always match the map.
+- **Choropleth**: Natural Earth 110m borders (world-atlas TopoJSON, public
+  domain) lazy-loaded on first toggle; counts via a 5° grid index + ray-cast
+  point-in-polygon over the full payload; rendered as a native fill layer
+  anchored beneath the terminator bands.
+- **US perimeters**: NIFC WFIGS "current interagency perimeters" ArcGIS
+  service — keyless, CORS-open, server-side geometry simplification
+  (`maxAllowableOffset`), paged fetch. Rendered as native fill+line beneath
+  the fire splats. **EU perimeters deferred**: EFFIS/GWIS expose WMS rasters,
+  not a public GeoJSON feature service — revisit if GWIS publishes one.
+- **Tauri wrapper deferred**: a desktop shell can't be built or meaningfully
+  verified in the headless build environment. When wanted: `npm create
+  tauri-app`, point `distDir` at `dist/`, run the Hono proxy as a sidecar (or
+  ship the static-data build). The SPA needs no code changes.

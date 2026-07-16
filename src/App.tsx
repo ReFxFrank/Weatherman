@@ -3,6 +3,10 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
 import { fetchEonetEvents, fetchFireDecoded, fetchQuota, REFRESH_MS } from './lib/api'
 import { deriveRenderAttributes } from './lib/binary'
+import { computeChoropleth } from './lib/choropleth'
+import { startDeepLinkSync } from './lib/deepLink'
+import { exportView } from './lib/exportView'
+import { fetchPerimeters } from './lib/perimeters'
 import { qualityConfig } from './lib/quality'
 import { computeFireStats } from './lib/stats'
 import { mapBus } from './lib/mapBus'
@@ -35,6 +39,8 @@ export default function App() {
   const selectedHotspot = useEmber((s) => s.selectedHotspot)
   const selectedEventId = useEmber((s) => s.selectedEventId)
   const viewEpoch = useEmber((s) => s.viewEpoch)
+  const showChoropleth = useEmber((s) => s.showChoropleth)
+  const showPerimeters = useEmber((s) => s.showPerimeters)
 
   const quality = useMemo(() => qualityConfig(tier), [tier])
   const debug = useMemo(() => new URLSearchParams(location.search).has('debug'), [])
@@ -56,6 +62,14 @@ export default function App() {
     queryFn: fetchEonetEvents,
     staleTime: REFRESH_MS,
     refetchInterval: REFRESH_MS,
+  })
+
+  // US perimeters (Phase 5): fetched lazily on first toggle, kept 30 min.
+  const { data: perimeters } = useQuery({
+    queryKey: ['perimeters'],
+    queryFn: fetchPerimeters,
+    enabled: showPerimeters,
+    staleTime: 30 * 60_000,
   })
 
   // FIRMS quota readout for the ?debug corner (§3.1).
@@ -163,6 +177,30 @@ export default function App() {
     setEmber({ sheet: null })
   }
 
+  // Country choropleth (Phase 5): recompute when on and inputs change.
+  const [choropleth, setChoropleth] = useState<GeoJSON.FeatureCollection | null>(null)
+  useEffect(() => {
+    if (!showChoropleth || !decoded) {
+      setChoropleth(null)
+      return
+    }
+    let cancelled = false
+    computeChoropleth(decoded, { frpMin, confMin, dayNight }, [qLo, qHi]).then((fc) => {
+      if (!cancelled) setChoropleth(fc)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [showChoropleth, decoded, frpMin, confMin, dayNight, qLo, qHi])
+
+  // Shareable deep links (Phase 5): keep the URL in sync with the view.
+  useEffect(() => startDeepLinkSync(), [])
+
+  const onExport = (format: 'csv' | 'geojson') => {
+    if (!decoded) return
+    exportView(format, decoded, { frpMin, confMin, dayNight }, timeRange, mapBus.getBounds?.() ?? null)
+  }
+
   const quotaLike = isError && /quota|429|transaction/i.test(error instanceof Error ? error.message : '')
 
   if (import.meta.env.DEV) {
@@ -179,10 +217,12 @@ export default function App() {
         events={events}
         quality={quality}
         selectedIndex={validSelection}
+        choropleth={choropleth}
+        perimeters={showPerimeters ? (perimeters ?? null) : null}
       />
       <SearchBox onNavigate={navigateTo} />
       <FilterPanel eventsCount={events?.length} />
-      <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} />
+      <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} onExport={onExport} />
       <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />
 
       {/* bottom-right slot: detail card wins, legend otherwise */}
@@ -199,7 +239,13 @@ export default function App() {
         <Legend className={`absolute bottom-8 right-4 z-0 hidden w-60 lg:block ${glass}`} />
       )}
 
-      <BottomSheet eventsCount={events?.length} stats={stats} newSince={newSince} onJumpTo={jumpToFire} />
+      <BottomSheet
+        eventsCount={events?.length}
+        stats={stats}
+        newSince={newSince}
+        onJumpTo={jumpToFire}
+        onExport={onExport}
+      />
 
       {/* status chips: error / stale / empty (§5.6 graceful states) */}
       <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex max-w-[92vw] -translate-x-1/2 flex-col items-center gap-2">
@@ -278,7 +324,8 @@ export default function App() {
       <footer
         className={`absolute bottom-1 left-2 z-0 px-2 py-1 text-[9px] tracking-wide text-slate-600 ${glass}`}
       >
-        Active fire data: NASA FIRMS (MODIS/VIIRS) · Named events: NASA EONET
+        Active fire data: NASA FIRMS (MODIS/VIIRS) · Named events: NASA EONET · Boundaries:
+        Natural Earth · US perimeters: NIFC
       </footer>
     </div>
   )

@@ -14,11 +14,13 @@ export function BottomSheet({
   stats,
   newSince,
   onJumpTo,
+  onExport,
 }: {
   eventsCount?: number
   stats: FireStats | null
   newSince: { count: number; sinceIso: string } | null
   onJumpTo: (t: { index: number; lon: number; lat: number }) => void
+  onExport: (format: 'csv' | 'geojson') => void
 }) {
   const sheet = useEmber((s) => s.sheet)
 
@@ -92,7 +94,7 @@ export function BottomSheet({
               {sheet === 'filters' ? (
                 <FilterContent eventsCount={eventsCount} />
               ) : (
-                <StatsContent stats={stats} newSince={newSince} onJumpTo={onJumpTo} />
+                <StatsContent stats={stats} newSince={newSince} onJumpTo={onJumpTo} onExport={onExport} />
               )}
             </div>
           </div>

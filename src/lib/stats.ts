@@ -23,6 +23,25 @@ export interface FireStats {
 
 const TOP_N = 5
 
+/**
+ * The shared filter predicate (mirrors the GPU DataFilterExtension ranges).
+ * computeFireStats keeps its own inlined copy for the hot loop — keep the two
+ * in sync when filter semantics change.
+ */
+export function passesFireFilters(
+  data: DecodedFire,
+  i: number,
+  filters: { frpMin: number; confMin: number; dayNight: 'all' | 'day' | 'night' },
+  timeRange: [number, number],
+  fetchSec: number,
+): boolean {
+  if (data.frp[i] < filters.frpMin) return false
+  if (data.conf[i] < filters.confMin) return false
+  if (filters.dayNight !== 'all' && data.night[i] !== (filters.dayNight === 'night' ? 1 : 0)) return false
+  const age = (fetchSec - data.tsSec[i]) / 86400
+  return age >= timeRange[0] && age <= timeRange[1]
+}
+
 export function computeFireStats(
   // runs on the FULL decoded payload, not the decimated render set — counts
   // and top-5 indices must reflect the truth, not the quality tier
