@@ -80,6 +80,10 @@ interface PulsePoint {
   position: [number, number]
   color: [number, number, number]
   radius: number
+  /** [frp, conf, night, ageDays] — the pulse layer must obey the same GPU
+   *  filters as every other fire layer (review finding: halos kept pulsing
+   *  on detections the filters had culled) */
+  filterValue: [number, number, number, number]
 }
 
 /** The ~16 highest-FRP detections get a gentle breathing halo. Cached per dataset. */
@@ -90,7 +94,7 @@ function topFires(data: FireData): PulsePoint[] {
   if (cached) return cached
   const N = 16
   const top: number[] = []
-  const { frp, positions, colors, radii, count } = data
+  const { frp, positions, colors, radii, filterValues, count } = data
   for (let i = 0; i < count; i++) {
     if (top.length < N) {
       top.push(i)
@@ -107,6 +111,12 @@ function topFires(data: FireData): PulsePoint[] {
     position: [positions[i * 2], positions[i * 2 + 1]] as [number, number],
     color: [colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2]] as [number, number, number],
     radius: radii[i],
+    filterValue: [
+      filterValues[i * 4],
+      filterValues[i * 4 + 1],
+      filterValues[i * 4 + 2],
+      filterValues[i * 4 + 3],
+    ] as [number, number, number, number],
   }))
   pulseCache.set(data, cached)
   return cached
@@ -136,6 +146,16 @@ export function buildFireLayers({
   const igniteEase = 1 - Math.pow(1 - Math.min(1, Math.max(0, ignite)), 3)
   const igniteScale = 0.25 + 0.75 * igniteEase
 
+  // High-zoom detail (§5.1): FRP-driven size is a far/mid-zoom affordance —
+  // close up it slams into the pixel caps and every detection becomes the
+  // same giant disc, mushing into its neighbors (VIIRS detections sit only
+  // ~375 m apart). Past z≈7 taper radii toward the physical sensor footprint
+  // and tighten the caps so detections resolve into crisp separate embers,
+  // letting color carry intensity.
+  const detail = smoothstep(7, 10, zoom)
+  const lerp = (a: number, b: number) => a + (b - a) * detail
+  const sizeTaper = 1 - 0.72 * detail
+
   const sharedData = {
     length: count,
     attributes: {
@@ -159,13 +179,16 @@ export function buildFireLayers({
     ageRange,
   ]
   // Feather only the age edges so scrubbing dissolves detections in/out
-  // instead of popping them (§5.2 "prioritize making it smooth").
+  // instead of popping them (§5.2 "prioritize making it smooth"). Never
+  // feather the age=0 edge in live mode — that would fade out precisely the
+  // newest detections (review finding).
   const ageFeather = Math.min(0.12, (ageRange[1] - ageRange[0]) / 4)
+  const softLo = ageRange[0] <= 0 ? ageRange[0] : ageRange[0] + ageFeather
   const filterSoftRange: [number, number][] = [
     [filters.frpMin, 1e9],
     [filters.confMin, 2],
     nightRange,
-    [ageRange[0] + ageFeather, ageRange[1] - ageFeather],
+    [softLo, ageRange[1] - ageFeather],
   ]
 
   const depthCompare = zoom > DEPTH_RELEASE_ZOOM ? ('always' as const) : ('less-equal' as const)
@@ -180,7 +203,7 @@ export function buildFireLayers({
       beforeId,
       data: sharedData,
       radiusUnits: 'meters' as const,
-      radiusScale: o.radiusScale * igniteScale,
+      radiusScale: o.radiusScale * igniteScale * sizeTaper,
       radiusMinPixels: o.minPx,
       radiusMaxPixels: o.maxPx,
       stroked: false,
@@ -214,8 +237,8 @@ export function buildFireLayers({
       splat('fire-glow-outer', {
         radiusScale: 6,
         minPx: 6,
-        maxPx: 110,
-        opacity: 0.04 * glowPresence * pointPresence,
+        maxPx: lerp(110, 36),
+        opacity: 0.04 * glowPresence * pointPresence * (1 - 0.55 * detail),
       }),
 
     // Inner halo — the main glow body (High + Balanced).
@@ -225,8 +248,8 @@ export function buildFireLayers({
       splat('fire-glow-inner', {
         radiusScale: 2.6,
         minPx: 2.8,
-        maxPx: 46,
-        opacity: 0.1 * glowPresence * pointPresence,
+        maxPx: lerp(46, 18),
+        opacity: 0.1 * glowPresence * pointPresence * (1 - 0.4 * detail),
       }),
 
     // Core points — at world zoom they read as embers inside the heat field;
@@ -235,7 +258,7 @@ export function buildFireLayers({
       splat('fire-core', {
         radiusScale: 1,
         minPx: 1.15,
-        maxPx: 22,
+        maxPx: lerp(22, 9),
         opacity: 0.9 * pointPresence,
       }),
 
@@ -243,21 +266,25 @@ export function buildFireLayers({
     // the per-frame cost is one tiny uniform-only layer update.
     showPoints &&
       igniteEase >= 1 &&
-      new ScatterplotLayer<PulsePoint, { beforeId?: string }>({
+      new ScatterplotLayer<PulsePoint, DataFilterExtensionProps & { beforeId?: string }>({
         id: 'fire-pulse',
         beforeId,
         data: topFires(data),
         getPosition: (d: PulsePoint) => d.position,
         getFillColor: (d: PulsePoint) => [d.color[0], d.color[1], d.color[2], 255],
         getRadius: (d: PulsePoint) => d.radius,
+        getFilterValue: (d: PulsePoint) => d.filterValue,
         radiusUnits: 'meters' as const,
-        radiusScale: 2.2 + 0.9 * Math.sin(pulse * Math.PI * 2),
+        radiusScale: (2.2 + 0.9 * Math.sin(pulse * Math.PI * 2)) * sizeTaper,
         radiusMinPixels: 5,
-        radiusMaxPixels: 64,
+        radiusMaxPixels: lerp(64, 26),
         stroked: false,
         pickable: false,
         opacity: 0.1 + 0.05 * Math.sin(pulse * Math.PI * 2),
         parameters: { ...ADDITIVE_BLEND, depthCompare },
+        extensions: FILTER_EXTENSIONS,
+        filterRange,
+        filterSoftRange,
       }),
   ]
 

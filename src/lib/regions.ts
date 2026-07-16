@@ -41,12 +41,13 @@ const POLYGONS: Array<{ region: number; ring: number[][] }> = [
     ],
   },
   // Europe: Iceland/Scandinavia to the Urals (60E), Caspian, Black Sea, Med
+  // (west edge past Iberia's Atlantic coast; Aegean edge south of Crete)
   {
     region: 2,
     ring: [
       [-30, 62], [-10, 70], [15, 72], [32, 72], [60, 70], [60, 51],
-      [50, 46.5], [42, 44], [36, 42], [28, 40.5], [26, 38], [22, 35.5],
-      [12, 36.5], [-6, 35.5], [-11, 43], [-28, 52],
+      [50, 46.5], [42, 44], [36, 42], [28, 40.5], [28.5, 36], [26.5, 34.4],
+      [21, 34.6], [12, 36.5], [-6, 35.7], [-10.5, 36], [-11.5, 44], [-28, 52],
     ],
   },
   // Africa (incl. Madagascar box on the SE)
@@ -59,14 +60,15 @@ const POLYGONS: Array<{ region: number; ring: number[][] }> = [
     ],
   },
   // Asia: Urals/Caspian east to Bering & down through Indonesia
+  // (Pacific edge bows east past the Japanese archipelago)
   {
     region: 4,
     ring: [
       [60, 70], [70, 78], [110, 78], [180, 71], [180, 64], [163, 58],
-      [156, 50], [145, 43], [128, 33], [122, 22], [128, 5], [120, -11],
-      [104, -9.5], [95, -6], [80, 4], [72, 6], [60, 22], [43, 11.5],
-      [35, 28], [33, 31.5], [36, 36], [26, 40.5], [28, 41.5], [36, 42],
-      [42, 44], [50, 46.5], [60, 51],
+      [156, 50], [147, 44], [143, 33], [128, 30], [122, 22], [128, 5],
+      [120, -11], [104, -9.5], [95, -6], [80, 4], [72, 6], [60, 22],
+      [43, 11.5], [35, 28], [33, 31.5], [36, 36], [26, 40.5], [28, 41.5],
+      [36, 42], [42, 44], [50, 46.5], [60, 51],
     ],
   },
   // Oceania: Australia, New Guinea, NZ, western Pacific

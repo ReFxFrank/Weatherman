@@ -119,7 +119,13 @@ export function nightBands(date: Date): GeoJSON.FeatureCollection {
   const darkSign: 1 | -1 = sun.lat >= 0 ? -1 : 1
   const poleLat = 90 * darkSign
 
-  const features: GeoJSON.Feature[] = BAND_DEPRESSIONS.map((d, band) => {
+  const features: GeoJSON.Feature[] = BAND_DEPRESSIONS.flatMap((d, band) => {
+    // Detached-band regime: when |declination| < depression the alt<−d region
+    // no longer contains either pole, so a pole-closed ring would wrongly
+    // shade the whole polar cap (review finding: weeks around each equinox).
+    // Under-shade honestly instead: skip the band until geometry returns.
+    if (d > 0 && Math.abs(sun.lat) <= d + 0.5) return []
+
     const sinD = Math.sin(d * RAD)
     const ring: [number, number][] = []
     for (let lon = -180; lon <= 180; lon++) {
@@ -127,11 +133,13 @@ export function nightBands(date: Date): GeoJSON.FeatureCollection {
     }
     // Close through the dark pole so the ring encloses the night cap.
     ring.push([180, poleLat], [-180, poleLat], [ring[0][0], ring[0][1]])
-    return {
-      type: 'Feature',
-      properties: { band },
-      geometry: { type: 'Polygon', coordinates: [ring] },
-    }
+    return [
+      {
+        type: 'Feature' as const,
+        properties: { band },
+        geometry: { type: 'Polygon' as const, coordinates: [ring] },
+      },
+    ]
   })
 
   return { type: 'FeatureCollection', features }

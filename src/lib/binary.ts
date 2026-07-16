@@ -40,18 +40,25 @@ export function decodeFireBinary(buf: ArrayBuffer): DecodedFire {
  * instead of calling JS accessors 187k times per layer update (§8).
  */
 export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
-  const n = stride > 1 ? Math.ceil(d.count / stride) : d.count
+  // The hottest fires must never be decimated away: the stats panel's top-5
+  // jump-to has to land on a rendered point (review finding), and they're the
+  // strongest visual anchors. Reserve slots to re-add them after striding.
+  const TOP_KEEP = 64
+  const base = stride > 1 ? Math.ceil(d.count / stride) : d.count
+  const cap = base + (stride > 1 ? TOP_KEEP : 0)
 
-  const positions = stride > 1 ? new Float32Array(n * 2) : d.positions
-  const frp = stride > 1 ? new Float32Array(n) : d.frp
-  const tsSec = stride > 1 ? new Uint32Array(n) : d.tsSec
-  const bright = stride > 1 ? new Float32Array(n) : d.bright
-  const conf = stride > 1 ? new Uint8Array(n) : d.conf
-  const night = stride > 1 ? new Uint8Array(n) : d.night
+  const positions = stride > 1 ? new Float32Array(cap * 2) : d.positions
+  const frp = stride > 1 ? new Float32Array(cap) : d.frp
+  const tsSec = stride > 1 ? new Uint32Array(cap) : d.tsSec
+  const bright = stride > 1 ? new Float32Array(cap) : d.bright
+  const conf = stride > 1 ? new Uint8Array(cap) : d.conf
+  const night = stride > 1 ? new Uint8Array(cap) : d.night
+  let n = base
   if (stride > 1) {
     // Stride sampling keeps global coverage (FIRMS rows are orbit-ordered, so
     // taking the first N would bias one hemisphere).
-    for (let i = 0, j = 0; j < n; i += stride, j++) {
+    let j = 0
+    for (let i = 0; j < base; i += stride, j++) {
       positions[j * 2] = d.positions[i * 2]
       positions[j * 2 + 1] = d.positions[i * 2 + 1]
       frp[j] = d.frp[i]
@@ -60,6 +67,28 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
       conf[j] = d.conf[i]
       night[j] = d.night[i]
     }
+    // Top-K FRP among the rows the stride skipped, via a small insertion pass.
+    const top: number[] = []
+    for (let i = 0; i < d.count; i++) {
+      if (i % stride === 0) continue
+      const f = d.frp[i]
+      if (top.length >= TOP_KEEP && f <= d.frp[top[top.length - 1]]) continue
+      let k = top.length < TOP_KEEP ? top.length : TOP_KEEP - 1
+      while (k > 0 && f > d.frp[top[k - 1]]) k--
+      top.splice(k, 0, i)
+      if (top.length > TOP_KEEP) top.pop()
+    }
+    for (const i of top) {
+      positions[j * 2] = d.positions[i * 2]
+      positions[j * 2 + 1] = d.positions[i * 2 + 1]
+      frp[j] = d.frp[i]
+      tsSec[j] = d.tsSec[i]
+      bright[j] = d.bright[i]
+      conf[j] = d.conf[i]
+      night[j] = d.night[i]
+      j++
+    }
+    n = j
   }
 
   const colors = new Uint8Array(n * 4)
@@ -81,5 +110,18 @@ export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
     filterValues[i * 4 + 3] = Math.max(0, (fetchSec - tsSec[i]) / 86400)
   }
 
-  return { meta: d.meta, count: n, positions, frp, tsSec, bright, conf, night, colors, radii, filterValues }
+  // Trim over-allocation (cap may exceed the rows actually written).
+  return {
+    meta: d.meta,
+    count: n,
+    positions: positions.length === n * 2 ? positions : positions.subarray(0, n * 2),
+    frp: frp.length === n ? frp : frp.subarray(0, n),
+    tsSec: tsSec.length === n ? tsSec : tsSec.subarray(0, n),
+    bright: bright.length === n ? bright : bright.subarray(0, n),
+    conf: conf.length === n ? conf : conf.subarray(0, n),
+    night: night.length === n ? night : night.subarray(0, n),
+    colors,
+    radii,
+    filterValues,
+  }
 }

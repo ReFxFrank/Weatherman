@@ -68,6 +68,9 @@ export function SearchBox({
   // debounced fetch
   useEffect(() => {
     if (query.trim().length < 2 || query === pickedRef.current) {
+      // also kill any in-flight request — its late resolution would reopen
+      // the dropdown for an abandoned query (review finding)
+      abortRef.current?.abort()
       setHits(null)
       setFailed(false)
       return

@@ -87,6 +87,7 @@ export function EmberMap({
   full,
   events,
   quality,
+  selectedIndex,
 }: {
   /** decimated render set (what deck draws) */
   data: FireData | undefined
@@ -94,6 +95,8 @@ export function EmberMap({
   full: DecodedFire | undefined
   events: EonetEvent[] | undefined
   quality: QualityConfig
+  /** validated selection (App checks payload identity + active filters) */
+  selectedIndex: number | null
 }) {
   const mapRef = useRef<MapRef>(null)
   const jump = useMemo(cameraOverride, [])
@@ -105,6 +108,13 @@ export function EmberMap({
   const entranceStarted = useRef(false)
   // Idle rotation emits moveend every frame — throttle in-view stat refreshes.
   const lastEpochBump = useRef(0)
+  const epochTimer = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (epochTimer.current !== null) clearTimeout(epochTimer.current)
+    },
+    [],
+  )
 
   const frpMin = useEmber((s) => s.frpMin)
   const confMin = useEmber((s) => s.confMin)
@@ -118,7 +128,6 @@ export function EmberMap({
   const days = useEmber((s) => s.days)
   const playhead = useEmber((s) => s.playhead)
   const selectedEventId = useEmber((s) => s.selectedEventId)
-  const selectedHotspot = useEmber((s) => s.selectedHotspot)
 
   // Live mode shows the whole fetched window; a playhead shows a 24h slice
   // ending `playhead` days ago. Either way it's one GPU uniform.
@@ -129,10 +138,10 @@ export function EmberMap({
 
   const selectedPoint = useMemo(
     () =>
-      full && selectedHotspot !== null && selectedHotspot < full.count
-        ? { lon: full.positions[selectedHotspot * 2], lat: full.positions[selectedHotspot * 2 + 1] }
+      full && selectedIndex !== null && selectedIndex < full.count
+        ? { lon: full.positions[selectedIndex * 2], lat: full.positions[selectedIndex * 2 + 1] }
         : null,
-    [full, selectedHotspot],
+    [full, selectedIndex],
   )
 
   // Everything the style.load handler must restore after a basemap swap
@@ -364,10 +373,22 @@ export function EmberMap({
       }}
       onMove={(e) => setZoom(e.viewState.zoom)}
       onMoveEnd={() => {
-        const now = Date.now()
-        if (now - lastEpochBump.current < 1200) return
-        lastEpochBump.current = now
-        setEmber({ viewEpoch: (useEmber.getState().viewEpoch + 1) % 1_000_000 })
+        // Throttle with a trailing edge: a moveend inside the window is
+        // deferred, never dropped, so the final camera position always
+        // refreshes the in-view stats (review finding).
+        const bump = () => {
+          lastEpochBump.current = Date.now()
+          setEmber({ viewEpoch: (useEmber.getState().viewEpoch + 1) % 1_000_000 })
+        }
+        const since = Date.now() - lastEpochBump.current
+        if (since >= 1200) {
+          bump()
+        } else if (epochTimer.current === null) {
+          epochTimer.current = window.setTimeout(() => {
+            epochTimer.current = null
+            bump()
+          }, 1200 - since)
+        }
       }}
       attributionControl={{ compact: true }}
       style={{ position: 'absolute', inset: 0, background: 'transparent' }}

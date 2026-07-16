@@ -92,6 +92,10 @@ export default function App() {
   const [newSince, setNewSince] = useState<{ count: number; sinceIso: string } | null>(null)
   useEffect(() => {
     if (!decoded) return
+    // keepPreviousData briefly pairs the OLD payload with the NEW query key —
+    // seeding the baseline then would fake a huge "+N new" on source/window
+    // switches (review finding). Wait for the real payload.
+    if (isPlaceholderData) return
     const key = `${source}/${days}`
     let maxTs = 0
     for (let i = 0; i < decoded.count; i++) if (decoded.tsSec[i] > maxTs) maxTs = decoded.tsSec[i]
@@ -104,16 +108,18 @@ export default function App() {
       setNewSince(null)
     }
     prevPayloadRef.current = { key, fetchedAt: decoded.meta.fetchedAt, maxTs }
-  }, [decoded, source, days])
+  }, [decoded, source, days, isPlaceholderData])
 
-  // Stats (§5.4). The playback slice moves every frame — quantize the time
-  // range to quarter-days so the full-array pass runs ~1-2×/s, not 60×/s.
+  // Stats (§5.4). Only DURING playback quantize the time range (quarter-days)
+  // so the full-array pass runs ~1-2×/s, not 60×/s; a resting scrub position
+  // uses the exact range so stats always match the GPU slice (review finding).
+  const playing = useEmber((s) => s.playing)
   const timeRange = useMemo<[number, number]>(
     () => (playhead === null ? [0, days] : [Math.max(0, playhead - 1), playhead]),
     [playhead, days],
   )
-  const qLo = Math.round(timeRange[0] * 4) / 4
-  const qHi = Math.round(timeRange[1] * 4) / 4
+  const qLo = playing ? Math.round(timeRange[0] * 4) / 4 : timeRange[0]
+  const qHi = playing ? Math.round(timeRange[1] * 4) / 4 : timeRange[1]
   const stats = useMemo(
     () =>
       decoded
@@ -127,6 +133,26 @@ export default function App() {
   const shownCount = stats?.shownTotal ?? 0
   const filtersActive = frpMin > 0 || confMin > 0 || dayNight !== 'all'
   const sourceLabel = SOURCES.find((x) => x.id === source)?.label ?? source
+
+  // Validate the open selection at render time: it must belong to THIS
+  // payload (indices shift across refetches — no one-paint flash of a wrong
+  // detection) and still pass the active filters (no orphaned ring/card
+  // after a filter change or playback scrub). Both were review findings.
+  const decodedIdentityRef = useRef(decoded)
+  const payloadChanged = decodedIdentityRef.current !== decoded
+  decodedIdentityRef.current = decoded
+  const validSelection = useMemo(() => {
+    if (payloadChanged || !decoded || selectedHotspot === null) return null
+    const i = selectedHotspot
+    if (i >= decoded.count) return null
+    if (decoded.frp[i] < frpMin || decoded.conf[i] < confMin) return null
+    const wantNight = dayNight === 'all' ? -1 : dayNight === 'night' ? 1 : 0
+    if (wantNight !== -1 && decoded.night[i] !== wantNight) return null
+    const age = (Date.parse(decoded.meta.fetchedAt) / 1000 - decoded.tsSec[i]) / 86400
+    if (age < timeRange[0] || age > timeRange[1]) return null
+    return i
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payloadChanged, decoded, selectedHotspot, frpMin, confMin, dayNight, timeRange])
 
   const jumpToFire = (t: { index: number; lon: number; lat: number }) => {
     mapBus.flyTo?.({ lon: t.lon, lat: t.lat, zoom: 8.5 })
@@ -147,17 +173,23 @@ export default function App() {
   return (
     <div className="relative h-full w-full overflow-hidden">
       <Starfield />
-      <EmberMap data={data} full={decoded} events={events} quality={quality} />
+      <EmberMap
+        data={data}
+        full={decoded}
+        events={events}
+        quality={quality}
+        selectedIndex={validSelection}
+      />
       <SearchBox onNavigate={navigateTo} />
       <FilterPanel eventsCount={events?.length} />
       <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} />
       <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />
 
       {/* bottom-right slot: detail card wins, legend otherwise */}
-      {decoded && selectedHotspot !== null && selectedHotspot < decoded.count ? (
+      {decoded && validSelection !== null ? (
         <HotspotCard
           data={decoded}
-          index={selectedHotspot}
+          index={validSelection}
           onClose={() => setEmber({ selectedHotspot: null })}
           className={CARD_POS}
         />
@@ -225,7 +257,7 @@ export default function App() {
               {filtersActive && (
                 <span className="text-slate-500"> of {data.meta.count.toLocaleString()}</span>
               )}{' '}
-              detections · last {days * 24}h ·{' '}
+              detections · last {Math.min(days, data.meta.coverageDays) * 24}h ·{' '}
               <span className="max-sm:hidden">{sourceLabel} · </span>
               {data.meta.mode === 'api' ? 'area API' : 'public feed'}
               {data.meta.stale ? ' · STALE' : ''}
