@@ -160,6 +160,14 @@ export function EmberMap({
     [full, selectedIndex],
   )
 
+  // A dark satellite's coverage ring restyles red — "covered but blind".
+  const satsDark = useMemo(
+    () =>
+      lightning?.meta.sats.map((s) => s.everListed && s.pendingKeys === 0 && !s.lastGranuleSec) ??
+      [],
+    [lightning],
+  )
+
   // Fire-specific dressing (event reticles, choropleth, perimeters, the
   // selection ring) only exists on the fire globe; the terminator and the
   // GLM coverage rings are shell/lightning concerns.
@@ -180,6 +188,7 @@ export function EmberMap({
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
+    satsDark,
   })
   styleStateRef.current = {
     projection,
@@ -193,6 +202,7 @@ export function EmberMap({
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
+    satsDark,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -203,7 +213,11 @@ export function EmberMap({
     // eonet first: its icon layer is the beforeId anchor for deck + the rest
     syncEonetSymbols(map, s.events ?? [], s.selectedEventId, s.showEvents)
     syncTerminatorLayers(map, { beforeId: EONET_ICON_LAYER, visible: s.showTerminator })
-    syncGlmCoverage(map, { beforeId: EONET_ICON_LAYER, visible: s.globe === 'lightning' })
+    syncGlmCoverage(map, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'lightning',
+      dark: s.satsDark,
+    })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
     syncSelectionMarker(map, s.selectedPoint)
@@ -231,19 +245,34 @@ export function EmberMap({
 
     const cancelFly = flyEntrance(map, target)
     const t0 = performance.now() + IGNITE_DELAY_MS
+    let igniteDone = false
     let raf = requestAnimationFrame(function tick(now: number) {
       const p = Math.min(1, Math.max(0, (now - t0) / IGNITE_MS))
       setIgnite(p)
       if (p < 1) raf = requestAnimationFrame(tick)
+      else igniteDone = true
     })
     // Settle when the ease actually ends (robust on slow renderers), not on a
     // wall-clock guess. A user interrupting the entrance also settles it.
-    const onMoveEnd = () => setCameraSettled(true)
+    let settled = false
+    const onMoveEnd = () => {
+      settled = true
+      setCameraSettled(true)
+    }
     map.once('moveend', onMoveEnd)
+    // This cleanup can fire long after the entrance finished (any deps change
+    // re-runs the effect — e.g. a globe switch). Only interrupt what is still
+    // in flight, and always leave the scene fully lit: a mid-entrance switch
+    // must not freeze ignite/cameraSettled at partial values (review finding),
+    // and a post-entrance switch must not map.stop() an unrelated animation.
     return () => {
       map.off('moveend', onMoveEnd)
-      cancelFly()
       cancelAnimationFrame(raf)
+      if (!settled || !igniteDone) {
+        if (!settled) cancelFly()
+        setIgnite(1)
+        setCameraSettled(true)
+      }
     }
   }, [mapLoaded, entranceReady, jump])
 
@@ -295,6 +324,7 @@ export function EmberMap({
     showChoropleth,
     perimeters,
     showPerimeters,
+    satsDark,
   ])
 
   // The terminator moves with the sun — refresh its geometry every minute.

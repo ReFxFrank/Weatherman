@@ -68,6 +68,13 @@ async function main() {
     try {
       const t0 = Date.now()
       const { meta, bin } = await fetchLightningOnce()
+      // GLM sees tens of thousands of flashes per hour across the Americas —
+      // a zero-count window means the fetch failed (S3 unreachable, both
+      // satellites listing empty), not a lightning-free hemisphere. Don't
+      // ship an empty payload as if it were real (review finding).
+      if (meta.count === 0) {
+        throw new Error('empty GLM window — S3 listings unavailable or both satellites dark')
+      }
       await writeFile(join(OUT_DIR, 'lightning.bin'), bin)
       lightning = { file: 'lightning.bin', count: meta.count, fetchedAt: meta.fetchedAt }
       console.log(

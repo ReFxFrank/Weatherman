@@ -1,17 +1,19 @@
-import type { Map as MapLibreMap } from 'maplibre-gl'
+import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 
 /**
  * GLM coverage honesty (docs/DECISIONS.md): the two GOES satellites see the
  * Americas and adjacent oceans, not the planet. Dashed rings mark the
  * approximate field-of-view edge of each satellite so the empty longitudes
- * read as "no coverage", never "no lightning".
+ * read as "no coverage", never "no lightning". A ring whose satellite is
+ * dark restyles red — "covered but currently blind" (review finding).
  *
  * The rings are spherical circles around each sub-satellite point. GLM's true
- * FOV is a rounded square; a 72° circle tracks the envelope of real detections
- * well enough for an honesty marker (labeled "approx" in the legend).
+ * FOV is a rounded square; the 64° radius matches the measured envelope of
+ * real detections (histogram over 45 live granules: dense to ~63°, zero
+ * beyond 65° — review-measured; an earlier 72° guess overstated coverage).
  */
 
-const RADIUS_DEG = 72
+const RADIUS_DEG = 64
 const SUB_SAT_LONS = [-137.2, -75.2] // GOES-West, GOES-East
 
 const DEG = Math.PI / 180
@@ -38,26 +40,35 @@ function circleSegments(lonCenter: number): number[][][] {
   return segments
 }
 
-const COVERAGE_GEOJSON: GeoJSON.FeatureCollection = {
-  type: 'FeatureCollection',
-  features: SUB_SAT_LONS.map((lon) => ({
-    type: 'Feature' as const,
-    properties: {},
-    geometry: { type: 'MultiLineString' as const, coordinates: circleSegments(lon) },
-  })),
+function coverageGeojson(dark: boolean[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: SUB_SAT_LONS.map((lon, i) => ({
+      type: 'Feature' as const,
+      properties: { dark: Boolean(dark[i]) },
+      geometry: { type: 'MultiLineString' as const, coordinates: circleSegments(lon) },
+    })),
+  }
 }
 
 export const GLM_COVERAGE_LAYER = 'glm-coverage'
+
+let lastDarkKey = ''
 
 /** Idempotent create/refresh of the coverage rings (same pattern as the
  *  other native layers — style swaps wipe everything, so re-add freely). */
 export function syncGlmCoverage(
   map: MapLibreMap,
-  { beforeId, visible }: { beforeId?: string; visible: boolean },
+  { beforeId, visible, dark = [] }: { beforeId?: string; visible: boolean; dark?: boolean[] },
 ): void {
   try {
+    const darkKey = dark.join(',')
     if (!map.getSource(GLM_COVERAGE_LAYER)) {
-      map.addSource(GLM_COVERAGE_LAYER, { type: 'geojson', data: COVERAGE_GEOJSON })
+      map.addSource(GLM_COVERAGE_LAYER, { type: 'geojson', data: coverageGeojson(dark) })
+      lastDarkKey = darkKey
+    } else if (darkKey !== lastDarkKey) {
+      ;(map.getSource(GLM_COVERAGE_LAYER) as GeoJSONSource).setData(coverageGeojson(dark))
+      lastDarkKey = darkKey
     }
     if (!map.getLayer(GLM_COVERAGE_LAYER)) {
       map.addLayer(
@@ -66,8 +77,8 @@ export function syncGlmCoverage(
           type: 'line',
           source: GLM_COVERAGE_LAYER,
           paint: {
-            'line-color': '#7dd3fc',
-            'line-opacity': 0.22,
+            'line-color': ['case', ['get', 'dark'], '#f87171', '#7dd3fc'] as never,
+            'line-opacity': ['case', ['get', 'dark'], 0.3, 0.22] as never,
             'line-width': 1,
             'line-dasharray': [2, 3],
           },

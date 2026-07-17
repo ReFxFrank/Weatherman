@@ -56,7 +56,9 @@ function LightningLegend() {
         </div>
         <p className="text-[9px] leading-snug text-slate-600">
           GOES GLM sees the Americas &amp; adjacent oceans — outside the rings means no
-          coverage, not no lightning. Strikes fade over 60 min.
+          coverage, not no lightning; a red ring means that satellite is currently dark.
+          Where the two rings overlap, both satellites see the same storm, so detections
+          there can count a flash twice. Strikes fade over 60 min.
         </p>
       </div>
     </>

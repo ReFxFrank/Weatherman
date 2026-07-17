@@ -79,13 +79,26 @@ export default function App() {
     queryKey: ['lightning'],
     queryFn: fetchLightningDecoded,
     placeholderData: keepPreviousData,
-    refetchInterval: LIGHTNING_REFRESH_MS,
+    // poll fast while the server is still backfilling its window (cold start
+    // fills in seconds instead of sitting on "0 detections" for a minute)
+    refetchInterval: (query) =>
+      query.state.data && query.state.data.meta.backfill < 0.98 ? 10_000 : LIGHTNING_REFRESH_MS,
     enabled: globe === 'lightning',
   })
   const lightningData = useMemo(
-    () => (lightningDecoded ? deriveLightningAttributes(lightningDecoded) : undefined),
-    [lightningDecoded],
+    () => (lightningDecoded ? deriveLightningAttributes(lightningDecoded, quality.maxPoints) : undefined),
+    [lightningDecoded, quality],
   )
+
+  // The satellite-lag chips are wall-clock readouts — re-render them between
+  // refetches (which can be 10 min apart on Pages) so "live 1m" can't quietly
+  // mean "live 9m" (review finding).
+  const [, setLagTick] = useState(0)
+  useEffect(() => {
+    if (globe !== 'lightning') return
+    const id = window.setInterval(() => setLagTick((t) => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [globe])
 
   // EONET named events — keyless + CORS-friendly, fetched straight from the
   // client (§3.2), refreshed on the same cadence.
@@ -375,8 +388,14 @@ export default function App() {
               )}
               {lightningDecoded && !lightningError && (
                 <span>
+                  {/* "detections": in the satellite-overlap zone one physical
+                      flash can be seen (and counted) by both satellites */}
                   <span className="text-sky-300">{lightningDecoded.count.toLocaleString()}</span>{' '}
-                  flashes · last {lightningDecoded.meta.windowMin} min · GOES GLM
+                  detections ·{' '}
+                  {lightningDecoded.meta.mode === 'live'
+                    ? `last ${lightningDecoded.meta.windowMin} min`
+                    : `${lightningDecoded.meta.windowMin} min to ${new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z`}{' '}
+                  · GOES GLM
                   {lightningDecoded.meta.backfill < 0.98 &&
                     ` · filling ${Math.round(lightningDecoded.meta.backfill * 100)}%`}
                 </span>
@@ -392,7 +411,15 @@ export default function App() {
                 return (
                   <span key={s.id}>
                     {i > 0 && ' · '}
-                    {label} <span className="text-red-400/90">DARK</span>
+                    {label}{' '}
+                    {/* only call a satellite DARK once its bucket has actually
+                        been listed with nothing pending — a cold-starting
+                        server is "acquiring", not a dual outage */}
+                    {s.everListed && s.pendingKeys === 0 ? (
+                      <span className="text-red-400/90">DARK</span>
+                    ) : (
+                      <span className="animate-pulse text-slate-400">acquiring…</span>
+                    )}
                   </span>
                 )
               const lagMin = Math.max(0, Date.now() / 1000 - s.lastGranuleSec) / 60
@@ -403,16 +430,30 @@ export default function App() {
                   <span className={lagMin > 15 ? 'text-amber-400/90' : 'text-sky-400/90'}>
                     {lagMin > 15 ? `${Math.round(lagMin)}m behind` : `live ${lagMin < 1 ? '<1' : Math.round(lagMin)}m`}
                   </span>
+                  {s.failedKeys > 8 && <span className="text-amber-400/80"> ({s.failedKeys} gaps)</span>}
                 </span>
               )
             })}
+            {lightningDecoded.meta.mode === 'live' && (
+              <span>
+                {' '}· upd {new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z
+              </span>
+            )}
           </div>
         )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
-            {fps} fps · {quality.tier} · rendering {data ? data.count.toLocaleString() : 0}
-            {data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''}
+            {fps} fps · {quality.tier} · rendering{' '}
+            {globe === 'lightning'
+              ? `${(lightningData?.count ?? 0).toLocaleString()}${
+                  lightningData && lightningData.count !== lightningData.meta.count
+                    ? ` of ${lightningData.meta.count.toLocaleString()}`
+                    : ''
+                } ⚡`
+              : `${(data?.count ?? 0).toLocaleString()}${
+                  data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}

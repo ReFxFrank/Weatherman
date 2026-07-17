@@ -18,6 +18,8 @@
  * the object key) — per-flash sub-second offsets exist in the file but are
  * irrelevant at the one-hour window this globe renders.
  */
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import h5wasm from 'h5wasm/node'
 
 export const LIGHTNING_WINDOW_MIN = 60
@@ -63,6 +65,11 @@ export interface SatMeta {
   flashCount: number
   /** granules listed in-window but not yet fetched (backfill in progress) */
   pendingKeys: number
+  /** granules that failed twice and were given up — window gaps */
+  failedKeys: number
+  /** false until the first successful bucket listing — lets the client tell
+   *  "still acquiring" apart from "satellite is dark" (review finding) */
+  everListed: boolean
 }
 
 export interface LightningMeta {
@@ -99,12 +106,14 @@ interface SatState {
   granules: Map<string, Granule>
   /** keys we've listed; pending/retry are fetchable, failed is given up */
   known: Map<string, 'pending' | 'retry' | 'done' | 'failed'>
+  everListed: boolean
 }
 
 const state: SatState[] = GLM_SATELLITES.map((def) => ({
   def,
   granules: new Map(),
   known: new Map(),
+  everListed: false,
 }))
 
 /** `_s20261980102200_` in an object key → epoch seconds (year, DOY, HHMMSS). */
@@ -159,7 +168,10 @@ async function fetchGranule(bucket: string, key: string): Promise<Granule> {
 
   const Module = await h5wasm.ready
   const { FS } = Module
-  const tmp = `glm-${decodeSeq++}.nc`
+  // h5wasm/node is NODERAWFS — these are REAL files, so they must live in the
+  // OS temp dir (not the cwd) and carry the pid: the proxy and the bake script
+  // can run concurrently from the same directory (review finding).
+  const tmp = join(tmpdir(), `ember-glm-${process.pid}-${decodeSeq++}.nc`)
   FS.writeFile(tmp, new Uint8Array(buf))
   let f: InstanceType<typeof h5wasm.File> | undefined
   try {
@@ -174,11 +186,17 @@ async function fetchGranule(bucket: string, key: string): Promise<Granule> {
     const q = ds('flash_quality_flag').value as Int16Array
     const eRaw = ds('flash_energy')
     const eVal = eRaw.value as Int16Array
-    // energy is a scaled int16 in joules — decode and store as femtojoules
+    // energy is a scaled int16 in joules, declared `_Unsigned: true` — h5wasm
+    // reads it signed, so the strongest flashes wrap negative unless converted
+    // back to unsigned (review finding: superbolts would be silently culled).
     const scale = attrNum(eRaw.attrs['scale_factor']?.value)
     const offset = attrNum(eRaw.attrs['add_offset']?.value)
-    const toFJ = (raw: number) =>
-      Number.isFinite(scale) ? (raw * scale + (Number.isFinite(offset) ? offset : 0)) * 1e15 : raw
+    const toFJ = (signedRaw: number) => {
+      const raw = signedRaw < 0 ? signedRaw + 0x10000 : signedRaw
+      return Number.isFinite(scale)
+        ? (raw * scale + (Number.isFinite(offset) ? offset : 0)) * 1e15
+        : raw
+    }
 
     const n = lat.length
     const outLon = new Float32Array(n)
@@ -189,7 +207,9 @@ async function fetchGranule(bucket: string, key: string): Promise<Granule> {
       if (q[i] !== 0) continue // keep only good-quality flashes
       outLon[m] = lon[i]
       outLat[m] = lat[i]
-      outEnergy[m] = toFJ(eVal[i])
+      // signed -1 is the unsigned 65535 _FillValue — position is still real,
+      // render the flash at minimum energy rather than as a fake superbolt
+      outEnergy[m] = eVal[i] === -1 ? 0 : toFJ(eVal[i])
       m++
     }
     return {
@@ -234,6 +254,7 @@ export async function ingestCycle(batch = FETCH_BATCH): Promise<number> {
     try {
       const prefixes = hourPrefixes(nowSec, LIGHTNING_WINDOW_MIN)
       const lists = await Promise.all(prefixes.map((p) => listKeys(s.def.bucket, p)))
+      s.everListed = true
       for (const key of lists.flat()) {
         if (!s.known.has(key) && granuleEpochSec(key) >= nowSec - EVICT_MIN * 60) {
           s.known.set(key, 'pending')
@@ -373,13 +394,25 @@ function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: 
       flashCount += g.lon.length
     }
     let pendingKeys = 0
+    let failedKeys = 0
     for (const [key, st] of s.known) {
       if (granuleEpochSec(key) < cutoff) continue
       listedInWindow++
       if (st === 'pending' || st === 'retry') pendingKeys++
-      else doneInWindow++
+      else {
+        doneInWindow++
+        if (st === 'failed') failedKeys++
+      }
     }
-    sats.push({ id: s.def.id, name: s.def.name, lastGranuleSec, flashCount, pendingKeys })
+    sats.push({
+      id: s.def.id,
+      name: s.def.name,
+      lastGranuleSec,
+      flashCount,
+      pendingKeys,
+      failedKeys,
+      everListed: s.everListed,
+    })
   }
 
   const meta: LightningMeta = {
@@ -389,7 +422,10 @@ function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: 
     fetchedAt: new Date().toISOString(),
     count: m,
     sats,
-    backfill: listedInWindow > 0 ? doneInWindow / listedInWindow : 0,
+    // No listings at all means nothing is fillable — report complete rather
+    // than a forever "filling 0%"; the per-sat DARK chips carry the honesty
+    // for that failure mode (review finding).
+    backfill: listedInWindow > 0 ? doneInWindow / listedInWindow : 1,
   }
   return { meta, bin: encodeLightning(meta, { positions, energy, tsSec, sat }) }
 }

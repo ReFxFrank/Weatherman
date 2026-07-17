@@ -37,7 +37,9 @@ export function GlobeSwitcher({ className = '' }: { className?: string }) {
           type="button"
           role="tab"
           aria-selected={globe === id}
-          onClick={() => setEmber({ globe: id })}
+          // no-op on the active tab: setEmber({globe}) clears selections,
+          // which a redundant click must not do (review finding)
+          onClick={() => globe !== id && setEmber({ globe: id })}
           className={`flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium tracking-widest transition-colors ${
             globe === id
               ? onCls

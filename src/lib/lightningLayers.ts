@@ -4,6 +4,9 @@ import { DataFilterExtension, type DataFilterExtensionProps } from '@deck.gl/ext
 import type { LightningData } from './types'
 import type { QualityConfig } from './quality'
 import { ADDITIVE_BLEND, DEPTH_RELEASE_ZOOM } from './fireLayers'
+import { FRESH_MIN } from './lightningBinary'
+
+export { FRESH_MIN }
 
 /**
  * The lightning globe's render stack — the fire globe's "light on a dark
@@ -22,9 +25,6 @@ import { ADDITIVE_BLEND, DEPTH_RELEASE_ZOOM } from './fireLayers'
  */
 
 const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 3 })]
-
-/** strikes younger than this (minutes) get the bloom treatment */
-export const FRESH_MIN = 3
 
 export interface LightningLayerOpts {
   data: LightningData
@@ -51,7 +51,12 @@ export function buildLightningLayers({
   const { count, positionsLifted, colors, radii, filterValues, meta } = data
 
   const fetchSec = Math.floor(Date.parse(meta.fetchedAt) / 1000) || nowSec
-  const elapsedMin = Math.max(0, (nowSec - fetchSec) / 60)
+  // Live payloads slide their window with the wall clock. Baked payloads
+  // (Pages, minutes-to-tens-of-minutes old) freeze at the bake instant: the
+  // full baked hour stays visible and the HUD labels it "60 min to HH:MMZ" —
+  // sliding would silently age out data and empty the fresh tier while the
+  // header still said "live" (review finding).
+  const elapsedMin = meta.mode === 'live' ? Math.max(0, (nowSec - fetchSec) / 60) : 0
   const windowMin = meta.windowMin || 60
 
   // Sliding window: a flash with ageAtFetch v is currently v + elapsed old.
@@ -72,7 +77,10 @@ export function buildLightningLayers({
     },
   }
 
-  const energyRange: [number, number] = [0, 1e12]
+  // No UI filters energy yet — the range exists only to fill the filter
+  // triplet, so it must never cull (a floor of 0 would drop any flash whose
+  // decoded energy rounds at-or-below zero; review finding).
+  const energyRange: [number, number] = [-1e12, 1e12]
   const satRange: [number, number] = [0, 8]
   const trailRange: [number, number][] = [[-1, trailHi], energyRange, satRange]
   const trailSoft: [number, number][] = [

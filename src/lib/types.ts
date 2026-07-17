@@ -64,6 +64,10 @@ export interface LightningSatMeta {
   flashCount: number
   /** granules listed but not yet fetched (server backfill in progress) */
   pendingKeys: number
+  /** granules that failed twice and were given up — window gaps */
+  failedKeys: number
+  /** false until the first bucket listing succeeds — "acquiring", not "dark" */
+  everListed: boolean
 }
 
 export interface LightningMeta {

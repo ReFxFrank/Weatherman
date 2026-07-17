@@ -283,7 +283,8 @@ for debugging.
 - **Coverage honesty**: GOES-West + GOES-East see the Americas, not the
   planet — and GOES-East's GLM feed was in a real multi-hour outage while
   this shipped. Per-satellite freshness ships in the payload header and
-  renders as HUD chips ("West live 1m · East DARK"); dashed ~72° rings mark
+  renders as HUD chips ("West live 1m · East DARK"); dashed 64° rings (radius
+  measured from the live detection envelope — nothing beyond 65°) mark
   the approximate FOV so empty longitudes read as "no coverage", never "no
   lightning". Both satellites' flashes render in the overlap zone (stereo
   double-count) — kept, since dropping one satellite would blind the overlap
@@ -304,3 +305,34 @@ for debugging.
 - **Lightning filters/stats/timeline deferred**: the lightning globe ships
   with HUD + legend only; per-globe filter panels and a minutes-scale
   timeline are a later phase once the framework proves out.
+
+## Phase 6 review round (adversarial workflow — 15 findings, fixes applied)
+
+Highlights of what the review caught before it shipped further:
+
+- `flash_energy` is `_Unsigned` int16 — h5wasm reads it signed, so superbolt
+  flashes (raw ≥ 32768) wrapped negative and the GPU filter culled exactly
+  the most spectacular strikes. Fixed with unsigned reinterpretation +
+  `_FillValue` (-1) guard.
+- h5wasm/node is NODERAWFS (real files, not MEMFS): temp granules now write
+  to `os.tmpdir()` with pid-unique names so a concurrently running proxy and
+  baker can't corrupt each other's decodes.
+- Coverage rings were drawn at a guessed 72°; the review *measured* the live
+  detection envelope (45 granules: dense to ~63°, zero past 65°) → 64°.
+- Baked/Pages payloads froze wrongly: the GPU window slid by wall clock, so a
+  25-min-old bake silently lost 40% of its data while claiming "last 60 min".
+  Baked windows now freeze at the bake instant and the HUD says
+  "60 min to HH:MMZ".
+- Mid-entrance globe switches froze ignite/cameraSettled permanently (dim
+  layers, no rotation); the entrance cleanup now finalizes instead.
+- Lightning had no quality-tier decimation — a hemispheric outbreak would
+  render every flash on the performance tier. Derive now honors the tier's
+  maxPoints cap, always preserving fresh (<3 min) and top-energy flashes.
+- Honesty polish: "flashes" → "detections" (stereo overlap double-counts),
+  cold-start shows "acquiring…" not a false dual-outage "DARK", permanent
+  fetch failures surface as "(N gaps)", a dark satellite's coverage ring
+  restyles red, HUD lag chips re-render on a 30 s tick.
+- Deferred knowingly: shared-shell controls (projection/basemap/quality/
+  terminator) currently live only in the fire-gated FilterPanel, so they are
+  unreachable on the lightning globe — lands with the lightning control
+  panel phase.
