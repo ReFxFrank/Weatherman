@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react'
 import { FRP_STOPS } from '../lib/colors'
 import { lightningColor } from '../lib/lightningBinary'
 import type { GlobeId } from '../store'
@@ -76,7 +77,7 @@ const OUTLOOK_CATS = [
   { label: 'HIGH', color: '#EE99EE' },
 ]
 
-function SevereLegend() {
+function SevereLegend(_props: { hasMtg?: boolean }) {
   return (
     <>
       <div className="flex gap-0.5">
@@ -119,35 +120,9 @@ function SevereLegend() {
   )
 }
 
-export function Legend({
-  className = 'w-60',
-  globe = 'fire',
-  hasMtg = false,
-}: {
-  className?: string
-  globe?: GlobeId
-  hasMtg?: boolean
-}) {
-  if (globe === 'severe') {
-    return (
-      <div className={`${className} px-4 py-3`}>
-        <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
-        <SevereLegend />
-      </div>
-    )
-  }
-  if (globe === 'lightning') {
-    return (
-      <div className={`${className} px-4 py-3`}>
-        <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
-        <LightningLegend hasMtg={hasMtg} />
-      </div>
-    )
-  }
+function FireLegend() {
   return (
-    <div className={`${className} px-4 py-3`}>
-      <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
-
+    <>
       <div className="h-2 rounded-sm" style={{ background: RAMP_GRADIENT }} />
       <div className="relative mt-0.5 h-3 font-mono text-[9px] text-slate-500">
         {FRP_STOPS.map((s, i) => (
@@ -196,6 +171,33 @@ export function Legend({
           <span className="text-[10px] text-slate-400">night side · real-time terminator</span>
         </div>
       </div>
+    </>
+  )
+}
+
+/** Per-globe legend bodies, keyed exhaustively — a new GlobeId without a
+ *  legend is a compile error, not a silently-wrong fire legend (registry
+ *  hardening; the fire fallback was a review finding). */
+const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
+  fire: FireLegend,
+  lightning: LightningLegend,
+  severe: SevereLegend,
+}
+
+export function Legend({
+  className = 'w-60',
+  globe = 'fire',
+  hasMtg = false,
+}: {
+  className?: string
+  globe?: GlobeId
+  hasMtg?: boolean
+}) {
+  const Body = LEGEND_BODIES[globe]
+  return (
+    <div className={`${className} px-4 py-3`}>
+      <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
+      <Body hasMtg={hasMtg} />
     </div>
   )
 }

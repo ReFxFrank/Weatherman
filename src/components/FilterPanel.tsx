@@ -110,12 +110,6 @@ export function FilterContent({ eventsCount }: { eventsCount?: number }) {
           note={eventsCount !== undefined ? `${eventsCount} open` : 'EONET'}
         />
         <Toggle
-          checked={s.showTerminator}
-          onChange={(showTerminator) => setEmber({ showTerminator })}
-          label="Night shade"
-          note="real-time"
-        />
-        <Toggle
           checked={s.showChoropleth}
           onChange={(showChoropleth) => setEmber({ showChoropleth })}
           label="Country counts"
@@ -129,6 +123,21 @@ export function FilterContent({ eventsCount }: { eventsCount?: number }) {
         />
       </Section>
 
+      <DisplayContent />
+    </>
+  )
+}
+
+/**
+ * Shell-level display controls (projection, basemap, night shade, quality) —
+ * shared by every globe: rendered inside the fire globe's filter panel and
+ * standalone (DisplayPanel) on the other globes, where these controls were
+ * previously unreachable (review finding).
+ */
+export function DisplayContent() {
+  const s = useEmber()
+  return (
+    <>
       <Section icon={GlobeIcon} title="VIEW">
         <Segmented
           value={s.projection}
@@ -146,6 +155,14 @@ export function FilterContent({ eventsCount }: { eventsCount?: number }) {
               { value: 'dark', label: 'Labels' },
               { value: 'dark-nolabels', label: 'No labels' },
             ]}
+          />
+        </div>
+        <div className="mt-2">
+          <Toggle
+            checked={s.showTerminator}
+            onChange={(showTerminator) => setEmber({ showTerminator })}
+            label="Night shade"
+            note="real-time"
           />
         </div>
       </Section>
@@ -166,6 +183,48 @@ export function FilterContent({ eventsCount }: { eventsCount?: number }) {
         </p>
       </Section>
     </>
+  )
+}
+
+/** Slim desktop shell for the non-fire globes: just the shared display
+ *  controls, same rail position as the fire filter panel. */
+export function DisplayPanel() {
+  const panelOpen = useEmber((s) => s.panelOpen)
+
+  if (!panelOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEmber({ panelOpen: true })}
+        title="Open display settings"
+        className={`absolute left-4 top-28 z-10 hidden h-10 w-10 items-center justify-center text-slate-300 transition-colors hover:text-amber-300 lg:flex ${glass}`}
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+      </button>
+    )
+  }
+
+  return (
+    <aside
+      className={`absolute left-4 top-28 z-10 hidden max-h-[calc(100%-8.5rem)] w-60 flex-col lg:flex ${glass}`}
+    >
+      <header className="flex items-center justify-between px-4 py-2.5">
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.2em] text-slate-400">
+          <SlidersHorizontal className="h-3 w-3" /> DISPLAY
+        </span>
+        <button
+          type="button"
+          onClick={() => setEmber({ panelOpen: false })}
+          title="Collapse"
+          className="rounded p-1 text-slate-500 hover:bg-white/5 hover:text-slate-200"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+        <DisplayContent />
+      </div>
+    </aside>
   )
 }
 

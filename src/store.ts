@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isGlobeId, type GlobeId } from './lib/globes'
 import type { QualityTier } from './lib/quality'
 import { detectQualityTier } from './lib/quality'
 
@@ -20,8 +21,9 @@ export type SourceId = (typeof SOURCES)[number]['id']
 export type DayNight = 'all' | 'day' | 'night'
 export type Projection = 'globe' | 'mercator'
 export type Basemap = 'dark' | 'dark-nolabels'
-/** Which data globe is on screen: fire watch, lightning, or severe weather. */
-export type GlobeId = 'fire' | 'lightning' | 'severe'
+/** GlobeId is owned by the registry (src/lib/globes) — re-exported here so
+ *  existing `from '../store'` imports keep working. */
+export type { GlobeId } from './lib/globes'
 
 export interface EmberState {
   /** active globe — the shell (camera, terminator, search) is shared */
@@ -81,7 +83,7 @@ function stateFromUrl(): Partial<EmberState> {
   const dn = q.get('dn')
   if (dn === 'day' || dn === 'night') out.dayNight = dn
   const g = q.get('globe')
-  if (g === 'lightning' || g === 'severe') out.globe = g
+  if (isGlobeId(g)) out.globe = g
   return out
 }
 

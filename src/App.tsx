@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
 import {
@@ -24,7 +24,7 @@ import { useFps } from './lib/useFps'
 import { BottomSheet } from './components/BottomSheet'
 import { EmberMap } from './components/EmberMap'
 import { EventCard } from './components/EventCard'
-import { FilterPanel } from './components/FilterPanel'
+import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
 import { Legend } from './components/Legend'
@@ -33,6 +33,7 @@ import { Starfield } from './components/Starfield'
 import { StatsPanel } from './components/StatsPanel'
 import { TimeControl } from './components/TimeControl'
 import { glass } from './components/ui'
+import { GLOBE_DEFS, GLOBES, SHARED_ATTRIBUTION, type GlobeId } from './lib/globes'
 import { setEmber, SOURCES, useEmber } from './store'
 
 /** Cards and the legend share the bottom-right slot; mobile centers them. */
@@ -157,13 +158,14 @@ export default function App() {
   }, [severeData, uiTick])
 
   // The entrance flies once the ACTIVE globe's feed resolves — data or a
-  // definitive error; never park in orbit forever on a dead feed.
-  const entranceReady =
-    globe === 'severe'
-      ? Boolean(severeShown) || severeError
-      : globe === 'lightning'
-        ? Boolean(lightningDecoded) || lightningError
-        : Boolean(decoded) || isError
+  // definitive error; never park in orbit forever on a dead feed. Keyed
+  // exhaustively: a new GlobeId without an entry is a compile error.
+  const feedReadiness: Record<GlobeId, boolean> = {
+    fire: Boolean(decoded) || isError,
+    lightning: Boolean(lightningDecoded) || lightningError,
+    severe: Boolean(severeShown) || severeError,
+  }
+  const entranceReady = feedReadiness[globe]
 
   // EONET named events — keyless + CORS-friendly, fetched straight from the
   // client (§3.2), refreshed on the same cadence.
@@ -320,6 +322,152 @@ export default function App() {
     ;(window as unknown as { __emberEvents?: typeof events }).__emberEvents = events
   }
 
+  // ------------------------------------------------------------------
+  // Per-globe feed presentation, keyed EXHAUSTIVELY on GlobeId (registry
+  // hardening): adding a globe to src/lib/globes.ts makes each table below
+  // a compile error until the globe's entry exists — per-globe branches
+  // can no longer be silently forgotten (that produced real bugs twice).
+  // ------------------------------------------------------------------
+  const errChip = (msg: ReactNode) => (
+    <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
+      <CloudOff className="h-3.5 w-3.5 shrink-0" />
+      {msg}
+    </div>
+  )
+
+  const feedChips: Record<GlobeId, ReactNode> = {
+    fire: (
+      <>
+        {isError && errChip(quotaLike ? 'FIRMS quota reached — retrying automatically' : 'Satellite feed unreachable — retrying automatically')}
+        {!isError && data?.meta.stale && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+            Upstream unreachable — showing cached data from{' '}
+            {new Date(data.meta.fetchedAt).toISOString().slice(11, 16)}Z
+          </div>
+        )}
+        {!isError && data && shownCount === 0 && !isLoading && (
+          <div className={`pointer-events-auto flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+            No detections match the current filters
+            {filtersActive && (
+              <button
+                type="button"
+                onClick={() => setEmber({ frpMin: 0, confMin: 0, dayNight: 'all', playhead: null, playing: false })}
+                className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300 hover:bg-amber-500/20"
+              >
+                <RotateCcw className="h-3 w-3" /> reset
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    ),
+    lightning: <>{lightningError && errChip('Lightning feed unreachable — retrying automatically')}</>,
+    severe: (
+      <>
+        {severeError && errChip('Severe weather feed unreachable — retrying automatically')}
+        {severeShown &&
+          !severeError &&
+          severeShown.counts.tornadoWarnings +
+            severeShown.counts.severeWarnings +
+            severeShown.counts.tornadoWatches +
+            severeShown.counts.severeWatches ===
+            0 && (
+            <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+              {severeShown.outlook && severeShown.outlook.features.length > 0
+                ? "No active tornado or severe thunderstorm alerts — shading shows today's SPC risk outlook"
+                : 'No active tornado or severe thunderstorm alerts in the NWS feed'}
+            </div>
+          )}
+      </>
+    ),
+  }
+
+  const feedStatus: Record<GlobeId, ReactNode> = {
+    fire: (
+      <>
+        {isLoading && <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.fire.feedName}…</span>}
+        {isError && (
+          <span className="text-red-400">
+            FEED ERROR — {error instanceof Error ? error.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {data && !isError && (
+          <span className={isPlaceholderData ? 'opacity-50' : ''}>
+            {/* headline = detections actually shown (time window + filters);
+                the raw feed also carries older-ingest rows the window hides */}
+            <span className="text-amber-300">{shownCount.toLocaleString()}</span>
+            {filtersActive && (
+              <span className="text-slate-500"> of {data.meta.count.toLocaleString()}</span>
+            )}{' '}
+            detections · last {Math.min(days, data.meta.coverageDays) * 24}h ·{' '}
+            <span className="max-sm:hidden">{sourceLabel} · </span>
+            {data.meta.mode === 'api' ? 'area API' : 'public feed'}
+            {data.meta.stale ? ' · STALE' : ''}
+            {isPlaceholderData ? ' · switching…' : ''}
+          </span>
+        )}
+      </>
+    ),
+    lightning: (
+      <>
+        {lightningLoading && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.lightning.feedName}…</span>
+        )}
+        {lightningError && (
+          <span className="text-red-400">
+            FEED ERROR — {lightningErr instanceof Error ? lightningErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {lightningDecoded && !lightningError && (
+          <span>
+            {/* "detections": in the satellite-overlap zone one physical
+                flash can be seen (and counted) by both satellites */}
+            <span className="text-sky-300">{lightningDecoded.count.toLocaleString()}</span>{' '}
+            detections ·{' '}
+            {lightningDecoded.meta.mode === 'live'
+              ? `last ${lightningDecoded.meta.windowMin} min`
+              : `${lightningDecoded.meta.windowMin} min to ${new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z`}{' '}
+            · GOES GLM
+            {lightningDecoded.meta.backfill < 0.98 &&
+              ` · filling ${Math.round(lightningDecoded.meta.backfill * 100)}%`}
+          </span>
+        )}
+      </>
+    ),
+    severe: (
+      <>
+        {severeLoading && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.severe.feedName}…</span>
+        )}
+        {severeError && (
+          <span className="text-red-400">
+            FEED ERROR — {severeErr instanceof Error ? severeErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {severeShown && !severeError && (
+          <span>
+            <span className={severeShown.counts.tornadoWarnings > 0 ? 'text-red-400' : 'text-slate-300'}>
+              {severeShown.counts.tornadoWarnings} TOR
+            </span>
+            {' · '}
+            <span className={severeShown.counts.severeWarnings > 0 ? 'text-amber-300' : 'text-slate-300'}>
+              {severeShown.counts.severeWarnings} SVR
+            </span>{' '}
+            warnings ·{' '}
+            {/* "watch areas": one SPC watch arrives as several zone
+                alerts — counting them as "watches" would inflate */}
+            {severeShown.counts.tornadoWatches + severeShown.counts.severeWatches} watch areas ·{' '}
+            {/* SPC report files cover the 12Z–12Z convective day */}
+            {severeShown.counts.reports} reports since 12Z
+            {severeShown.counts.unmapped > 0 ? ` · ${severeShown.counts.unmapped} unmapped` : ''}
+            {severeShown.stale ? ' · STALE' : ''}
+          </span>
+        )}
+      </>
+    ),
+  }
+
   return (
     <div className="relative h-full w-full overflow-hidden">
       <Starfield />
@@ -337,8 +485,9 @@ export default function App() {
       />
       <SearchBox onNavigate={navigateTo} />
       {/* fire-globe control surfaces (filters/stats/timeline operate on FIRMS
-          semantics; lightning grows its own in a later phase) */}
-      {globe === 'fire' && <FilterPanel eventsCount={events?.length} />}
+          semantics); other globes get the shared display controls, which were
+          previously unreachable off the fire globe (review finding) */}
+      {globe === 'fire' ? <FilterPanel eventsCount={events?.length} /> : <DisplayPanel />}
       {globe === 'fire' && (
         <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} onExport={onExport} />
       )}
@@ -374,59 +523,7 @@ export default function App() {
 
       {/* status chips: error / stale / empty (§5.6 graceful states) */}
       <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex max-w-[92vw] -translate-x-1/2 flex-col items-center gap-2">
-        {globe === 'severe' && severeError && (
-          <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
-            <CloudOff className="h-3.5 w-3.5 shrink-0" />
-            Severe weather feed unreachable — retrying automatically
-          </div>
-        )}
-        {globe === 'severe' &&
-          severeShown &&
-          !severeError &&
-          severeShown.counts.tornadoWarnings +
-            severeShown.counts.severeWarnings +
-            severeShown.counts.tornadoWatches +
-            severeShown.counts.severeWatches ===
-            0 && (
-            <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
-              {severeShown.outlook && severeShown.outlook.features.length > 0
-                ? "No active tornado or severe thunderstorm alerts — shading shows today's SPC risk outlook"
-                : 'No active tornado or severe thunderstorm alerts in the NWS feed'}
-            </div>
-          )}
-        {globe === 'lightning' && lightningError && (
-          <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
-            <CloudOff className="h-3.5 w-3.5 shrink-0" />
-            Lightning feed unreachable — retrying automatically
-          </div>
-        )}
-        {globe === 'fire' && isError && (
-          <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
-            <CloudOff className="h-3.5 w-3.5 shrink-0" />
-            {quotaLike ? 'FIRMS quota reached — retrying automatically' : 'Satellite feed unreachable — retrying automatically'}
-          </div>
-        )}
-        {globe === 'fire' && !isError && data?.meta.stale && (
-          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
-            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-            Upstream unreachable — showing cached data from{' '}
-            {new Date(data.meta.fetchedAt).toISOString().slice(11, 16)}Z
-          </div>
-        )}
-        {globe === 'fire' && !isError && data && shownCount === 0 && !isLoading && (
-          <div className={`pointer-events-auto flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
-            No detections match the current filters
-            {filtersActive && (
-              <button
-                type="button"
-                onClick={() => setEmber({ frpMin: 0, confMin: 0, dayNight: 'all', playhead: null, playing: false })}
-                className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300 hover:bg-amber-500/20"
-              >
-                <RotateCcw className="h-3 w-3" /> reset
-              </button>
-            )}
-          </div>
-        )}
+        {feedChips[globe]}
       </div>
 
       {/* Brand + feed status HUD */}
@@ -440,86 +537,7 @@ export default function App() {
         </div>
         <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-slate-400 max-sm:text-[10px]">
           <Satellite className="h-3 w-3 shrink-0 text-slate-500" />
-          {globe === 'severe' ? (
-            <>
-              {severeLoading && (
-                <span className="animate-pulse text-slate-300">ACQUIRING NWS/SPC FEED…</span>
-              )}
-              {severeError && (
-                <span className="text-red-400">
-                  FEED ERROR — {severeErr instanceof Error ? severeErr.message.slice(0, 60) : 'unknown'}
-                </span>
-              )}
-              {severeShown && !severeError && (
-                <span>
-                  <span className={severeShown.counts.tornadoWarnings > 0 ? 'text-red-400' : 'text-slate-300'}>
-                    {severeShown.counts.tornadoWarnings} TOR
-                  </span>
-                  {' · '}
-                  <span className={severeShown.counts.severeWarnings > 0 ? 'text-amber-300' : 'text-slate-300'}>
-                    {severeShown.counts.severeWarnings} SVR
-                  </span>{' '}
-                  warnings ·{' '}
-                  {/* "watch areas": one SPC watch arrives as several zone
-                      alerts — counting them as "watches" would inflate */}
-                  {severeShown.counts.tornadoWatches + severeShown.counts.severeWatches} watch areas ·{' '}
-                  {/* SPC report files cover the 12Z–12Z convective day */}
-                  {severeShown.counts.reports} reports since 12Z
-                  {severeShown.counts.unmapped > 0 ? ` · ${severeShown.counts.unmapped} unmapped` : ''}
-                  {severeShown.stale ? ' · STALE' : ''}
-                </span>
-              )}
-            </>
-          ) : globe === 'fire' ? (
-            <>
-              {isLoading && <span className="animate-pulse text-slate-300">ACQUIRING SATELLITE FEED…</span>}
-              {isError && (
-                <span className="text-red-400">
-                  FEED ERROR — {error instanceof Error ? error.message.slice(0, 60) : 'unknown'}
-                </span>
-              )}
-              {data && !isError && (
-                <span className={isPlaceholderData ? 'opacity-50' : ''}>
-                  {/* headline = detections actually shown (time window + filters);
-                      the raw feed also carries older-ingest rows the window hides */}
-                  <span className="text-amber-300">{shownCount.toLocaleString()}</span>
-                  {filtersActive && (
-                    <span className="text-slate-500"> of {data.meta.count.toLocaleString()}</span>
-                  )}{' '}
-                  detections · last {Math.min(days, data.meta.coverageDays) * 24}h ·{' '}
-                  <span className="max-sm:hidden">{sourceLabel} · </span>
-                  {data.meta.mode === 'api' ? 'area API' : 'public feed'}
-                  {data.meta.stale ? ' · STALE' : ''}
-                  {isPlaceholderData ? ' · switching…' : ''}
-                </span>
-              )}
-            </>
-          ) : (
-            <>
-              {lightningLoading && (
-                <span className="animate-pulse text-slate-300">ACQUIRING LIGHTNING FEED…</span>
-              )}
-              {lightningError && (
-                <span className="text-red-400">
-                  FEED ERROR — {lightningErr instanceof Error ? lightningErr.message.slice(0, 60) : 'unknown'}
-                </span>
-              )}
-              {lightningDecoded && !lightningError && (
-                <span>
-                  {/* "detections": in the satellite-overlap zone one physical
-                      flash can be seen (and counted) by both satellites */}
-                  <span className="text-sky-300">{lightningDecoded.count.toLocaleString()}</span>{' '}
-                  detections ·{' '}
-                  {lightningDecoded.meta.mode === 'live'
-                    ? `last ${lightningDecoded.meta.windowMin} min`
-                    : `${lightningDecoded.meta.windowMin} min to ${new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z`}{' '}
-                  · GOES GLM
-                  {lightningDecoded.meta.backfill < 0.98 &&
-                    ` · filling ${Math.round(lightningDecoded.meta.backfill * 100)}%`}
-                </span>
-              )}
-            </>
-          )}
+          {feedStatus[globe]}
         </div>
         {globe === 'lightning' && lightningDecoded && (
           <div className="mt-1 font-mono text-[10px] text-slate-500">
@@ -602,9 +620,9 @@ export default function App() {
       <footer
         className={`absolute bottom-1 left-2 z-0 px-2 py-1 text-[9px] tracking-wide text-slate-600 ${glass}`}
       >
-        Active fire data: NASA FIRMS (MODIS/VIIRS) · Lightning: NOAA GOES GLM + EUMETSAT MTG-LI ·
-        Severe weather: NOAA NWS/SPC · Named events: NASA EONET · Boundaries: Natural Earth ·
-        US perimeters: NIFC
+        {/* §10: every globe's datasets credited — derived from the registry
+            so a new globe cannot ship uncredited (review finding) */}
+        {GLOBE_DEFS.map((g) => g.attribution).join(' · ')} · {SHARED_ATTRIBUTION}
       </footer>
     </div>
   )
