@@ -3,12 +3,20 @@ import Map, { useControl } from 'react-map-gl/maplibre'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import type { DecodedFire, EonetEvent, FireData, LightningData, SeverePayload } from '../lib/types'
+import type {
+  DecodedFire,
+  EonetEvent,
+  FireData,
+  HurricanePayload,
+  LightningData,
+  SeverePayload,
+} from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
 import { buildLightningLayers } from '../lib/lightningLayers'
 import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
 import { syncGlmCoverage } from '../lib/coverage'
+import { syncHurricaneLayers } from '../lib/hurricaneLayers'
 import { syncSevereLayers } from '../lib/severeLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
@@ -92,6 +100,7 @@ export function EmberMap({
   full,
   lightning,
   severe,
+  hurricanes,
   entranceReady,
   events,
   quality,
@@ -107,6 +116,8 @@ export function EmberMap({
   lightning: LightningData | undefined
   /** severe-weather payload (NWS/SPC), undefined until its globe is active */
   severe: SeverePayload | undefined
+  /** tropical-cyclone payload (NHC/EONET), undefined until its globe is active */
+  hurricanes: HurricanePayload | undefined
   /** active globe's data arrived OR its query errored — the entrance must
    *  not wait forever on a feed that is down (review finding); App owns the
    *  per-globe query state, so App computes this */
@@ -202,6 +213,7 @@ export function EmberMap({
     showPerimeters: showPerimeters && fireGlobe,
     coverageSats,
     severe,
+    hurricanes,
   })
   styleStateRef.current = {
     projection,
@@ -217,6 +229,7 @@ export function EmberMap({
     showPerimeters: showPerimeters && fireGlobe,
     coverageSats,
     severe,
+    hurricanes,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -235,6 +248,10 @@ export function EmberMap({
     syncSevereLayers(map, s.severe ?? null, {
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'severe',
+    })
+    syncHurricaneLayers(map, s.hurricanes ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'hurricanes',
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -303,10 +320,10 @@ export function EmberMap({
   }, [cameraSettled])
 
   // Gentle pulse driver for the top-FRP halos — ~30fps, paused when hidden.
-  // The severe globe renders no deck layers, so don't burn 30 renders/s on it
-  // (review finding).
+  // The severe/hurricanes globes render no deck layers, so don't burn 30
+  // renders/s on them (review finding).
   useEffect(() => {
-    if (!cameraSettled || ignite < 1 || globe === 'severe') return
+    if (!cameraSettled || ignite < 1 || globe === 'severe' || globe === 'hurricanes') return
     let raf = 0
     let last = 0
     const tick = (now: number) => {
@@ -359,6 +376,17 @@ export function EmberMap({
       visible: globe === 'severe',
     })
   }, [mapLoaded, severe, globe])
+
+  // Same dedicated re-sync for the hurricanes payload (5-min refresh).
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncHurricaneLayers(map, hurricanes ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'hurricanes',
+    })
+  }, [mapLoaded, hurricanes, globe])
 
   // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {
@@ -450,7 +478,8 @@ export function EmberMap({
   const layers = useMemo(() => {
     // splats render beneath the event reticles once those layers exist
     const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
-    if (globe === 'severe') return [] // all-native layers (polygons + points)
+    // all-native globes (polygons/lines/points — no deck splats)
+    if (globe === 'severe' || globe === 'hurricanes') return []
     if (globe === 'lightning') {
       return lightning
         ? buildLightningLayers({

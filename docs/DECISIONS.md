@@ -390,3 +390,61 @@ Highlights of what the review caught before it shipped further:
   Canada (ECCC CAP) and Europe (MeteoAlarm — 17 MB feeds, unverifiable
   redistribution terms), a convective-day timeline. The severe payload
   reuses the deployed copy on upstream failure, like the fire bins.
+
+
+## Phase 8 notes — framework hardening + the hurricanes globe
+
+- **Globe registry** (`src/lib/globes.ts`): three globes of per-globe
+  branches had already produced two real bugs (a globe missing from the
+  footer attribution, another missing from the debug HUD). `GLOBE_DEFS` is
+  now the single source of truth — `GlobeId` derives from it, and every
+  dispatch surface (switcher tabs, HUD status, feed chips, entrance
+  readiness, legend bodies, attribution footer) is either generated from the
+  registry or typed `Record<GlobeId, …>`, so adding a globe without one of
+  its entries fails to compile. Adding the hurricanes globe exercised this:
+  the registry entry produced exactly four compile errors — the to-do list.
+- **Shared display controls**: projection/basemap/night-shade/quality lived
+  only in the fire-gated FilterPanel and were unreachable on other globes
+  (deferred finding from Phase 6). `DisplayContent` is now split out and
+  every non-fire globe mounts a slim `DisplayPanel` in the same rail slot.
+- **Hurricanes sources** (all keyless, US-government/NASA, live-verified
+  against TS Elida): NHC `CurrentStorms.json` (the active-storm index —
+  name, classification, kt, mb, position, movement, advisory); the NOAA
+  ArcGIS NHC tropical-summary MapServer as `f=geojson` — layer 5 forecast
+  points (per-tau `ssnum`/`maxwind`), 6 forecast track, 7 forecast cone,
+  11 past track (per-segment Saffir-Simpson `ss`). Field names are
+  lowercase; uppercase `outFields` silently return zero features (verified
+  the hard way). NASA EONET `severeStorms` fills in basins NHC doesn't
+  cover (W Pacific typhoons etc.).
+- **Phantom-storm filter**: EONET keeps events "open" for days after a
+  storm dissipates. Events whose newest track point is older than 48 h are
+  dropped, and storms already in the NHC index are deduped by name — with
+  word-boundary matching so short names can't false-match inside longer
+  titles. NHC wins the dedupe (fresher, richer: cone/track/points).
+- **Failure semantics**: the storm index failing fails the whole build
+  (stale fallback with the flag set); each ArcGIS layer degrades to empty
+  independently (heads still render from the index). ArcGIS error-in-200
+  responses are detected and thrown rather than treated as "no storms".
+  5-min TTL + 60 s failure backoff + last-good stale, like severe.
+- **Degraded ≠ empty** (review finding): a build with a failed source
+  carries `degraded: [...]` — the client shows an amber "sources
+  unavailable" chip and a PARTIAL flag, and suppresses the "no active
+  cyclones" all-clear (an EONET outage during a quiet NHC day must not
+  read as a cyclone-free planet). A degraded build never replaces a
+  complete `lastGood` in the live cache, and the bake prefers a complete
+  previous deploy (stale-flagged) over degraded-fresh, so outages can't
+  erode the fallback chain one section at a time.
+- **Cone honesty**: the NHC cone is the probable path of the storm CENTER
+  (sized from historical track error), not the extent of impacts — the
+  legend says exactly that, and says non-NHC basins show EONET history
+  tracks only. Advisory cadence is 3–6 h, so the 5-min poll is generous.
+- **All-native rendering**: like severe — a handful of polygons/lines/
+  points. Forecast points color by predicted category (TD/TS split on
+  34 kt, C1–C5 by `ssnum`), past track by per-segment `ss`, storm heads by
+  current intensity, labels via the same symbol pattern as EONET reticles.
+  EONET history lines split at the antimeridian (W Pacific storms would
+  otherwise draw a wrap-around chord across the globe).
+- **Bake**: `hurricanes.json` joins the Pages bake with the same
+  reuse-previous-deploy fallback as severe, now extracted into a shared
+  `reusePreviousJson()` helper (review finding: the severe block had
+  re-implemented `reusePrevious()` inline).

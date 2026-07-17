@@ -162,6 +162,59 @@ export interface SeverePayload {
   renderKey?: string
 }
 
+// ---------------------------------------------------------------------------
+// Tropical cyclones (NHC + EONET) — mirrors server/hurricanes.ts
+// ---------------------------------------------------------------------------
+
+export interface ActiveStorm {
+  id: string
+  name: string
+  /** TD | TS | HU | PTC … as NHC classifies it */
+  classification: string
+  /** max sustained wind, kt */
+  intensityKt: number
+  pressureMb: number | null
+  lat: number
+  lon: number
+  movementDir: number | null
+  movementSpeedKt: number | null
+  advisoryNum: string
+  lastUpdate: string
+}
+
+export interface GlobalStorm {
+  title: string
+  /** oldest → newest [lon, lat, iso] */
+  track: Array<[number, number, string]>
+  lastDate: string
+}
+
+export interface HurricaneCounts {
+  nhcActive: number
+  globalActive: number
+  strongestName: string | null
+  strongestKt: number
+}
+
+export interface HurricanePayload {
+  source: 'nhc-eonet'
+  mode: 'live' | 'baked'
+  fetchedAt: string
+  storms: ActiveStorm[]
+  /** forecast cones/tracks/points + past tracks — trimmed NHC GeoJSON */
+  cones: GeoJSON.FeatureCollection
+  tracks: GeoJSON.FeatureCollection
+  points: GeoJSON.FeatureCollection
+  pastTracks: GeoJSON.FeatureCollection
+  /** non-NHC storms from EONET, freshness-filtered */
+  global: GlobalStorm[]
+  counts: HurricaneCounts
+  stale?: boolean
+  /** sources that failed this build — empty sections there mean "source
+   *  down", NOT "no storms"; never render an all-clear over these */
+  degraded?: string[]
+}
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

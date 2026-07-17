@@ -4,9 +4,11 @@ import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-rea
 import {
   fetchEonetEvents,
   fetchFireDecoded,
+  fetchHurricanes,
   fetchLightningDecoded,
   fetchQuota,
   fetchSevere,
+  HURRICANES_REFRESH_MS,
   LIGHTNING_REFRESH_MS,
   REFRESH_MS,
   SEVERE_REFRESH_MS,
@@ -108,6 +110,21 @@ export default function App() {
     enabled: globe === 'severe',
   })
 
+  // Hurricanes globe (NHC + EONET): small JSON payload; advisories land
+  // every 3–6 h, so a 5-min poll is already generous.
+  const {
+    data: hurricanesData,
+    isLoading: hurricanesLoading,
+    isError: hurricanesError,
+    error: hurricanesErr,
+  } = useQuery({
+    queryKey: ['hurricanes'],
+    queryFn: fetchHurricanes,
+    placeholderData: keepPreviousData,
+    refetchInterval: HURRICANES_REFRESH_MS,
+    enabled: globe === 'hurricanes',
+  })
+
   // Wall-clock tick for the non-fire globes: lightning lag chips and the
   // severe expiry filter must track real time between refetches (which can
   // be 10 min apart on Pages; review findings).
@@ -164,6 +181,7 @@ export default function App() {
     fire: Boolean(decoded) || isError,
     lightning: Boolean(lightningDecoded) || lightningError,
     severe: Boolean(severeShown) || severeError,
+    hurricanes: Boolean(hurricanesData) || hurricanesError,
   }
   const entranceReady = feedReadiness[globe]
 
@@ -381,6 +399,27 @@ export default function App() {
           )}
       </>
     ),
+    hurricanes: (
+      <>
+        {hurricanesError && errChip('Hurricane feed unreachable — retrying automatically')}
+        {hurricanesData && !hurricanesError && (hurricanesData.degraded?.length ?? 0) > 0 && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+            Some hurricane sources unavailable ({hurricanesData.degraded!.join(', ')}) — coverage
+            may be incomplete
+          </div>
+        )}
+        {/* the all-clear is only honest when every source actually reported */}
+        {hurricanesData &&
+          !hurricanesError &&
+          !hurricanesData.degraded?.length &&
+          hurricanesData.counts.nhcActive + hurricanesData.counts.globalActive === 0 && (
+            <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+              No active tropical cyclones in the NHC or EONET feeds
+            </div>
+          )}
+      </>
+    ),
   }
 
   const feedStatus: Record<GlobeId, ReactNode> = {
@@ -466,6 +505,38 @@ export default function App() {
         )}
       </>
     ),
+    hurricanes: (
+      <>
+        {hurricanesLoading && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.hurricanes.feedName}…</span>
+        )}
+        {hurricanesError && (
+          <span className="text-red-400">
+            FEED ERROR — {hurricanesErr instanceof Error ? hurricanesErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {hurricanesData && !hurricanesError && (
+          <span>
+            <span className={hurricanesData.counts.nhcActive > 0 ? 'text-violet-300' : 'text-slate-300'}>
+              {hurricanesData.counts.nhcActive}
+            </span>{' '}
+            {/* NHC covers the Atlantic + E/C Pacific; EONET fills in the rest */}
+            NHC storm{hurricanesData.counts.nhcActive === 1 ? '' : 's'} ·{' '}
+            <span className={hurricanesData.counts.globalActive > 0 ? 'text-sky-300' : 'text-slate-300'}>
+              {hurricanesData.counts.globalActive}
+            </span>{' '}
+            elsewhere
+            {/* EONET storms carry no intensity — "peak" is an NHC-basin
+                claim, and must say so when non-NHC storms are on the globe */}
+            {hurricanesData.counts.strongestName
+              ? ` · ${hurricanesData.counts.globalActive > 0 ? 'NHC peak' : 'peak'} ${hurricanesData.counts.strongestName.toUpperCase()} ${hurricanesData.counts.strongestKt}kt`
+              : ''}
+            {hurricanesData.degraded?.length ? ' · PARTIAL' : ''}
+            {hurricanesData.stale ? ' · STALE' : ''}
+          </span>
+        )}
+      </>
+    ),
   }
 
   return (
@@ -476,6 +547,7 @@ export default function App() {
         full={decoded}
         lightning={globe === 'lightning' ? lightningData : undefined}
         severe={globe === 'severe' ? severeShown : undefined}
+        hurricanes={globe === 'hurricanes' ? hurricanesData : undefined}
         entranceReady={entranceReady}
         events={events}
         quality={quality}
@@ -596,6 +668,13 @@ export default function App() {
             {new Date(severeShown.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
+        {globe === 'hurricanes' && hurricanesData && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            NHC advisories · forecast cone &amp; track · EONET global ·{' '}
+            {hurricanesData.mode === 'live' ? 'upd' : 'as of'}{' '}
+            {new Date(hurricanesData.fetchedAt).toISOString().slice(11, 16)}Z
+          </div>
+        )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
@@ -608,9 +687,11 @@ export default function App() {
                 } ⚡`
               : globe === 'severe'
                 ? `${severeShown?.alerts.features.length ?? 0} alert areas 🌪`
-                : `${(data?.count ?? 0).toLocaleString()}${
-                    data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
-                  }`}
+                : globe === 'hurricanes'
+                  ? `${(hurricanesData?.counts.nhcActive ?? 0) + (hurricanesData?.counts.globalActive ?? 0)} storms 🌀`
+                  : `${(data?.count ?? 0).toLocaleString()}${
+                      data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                    }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}

@@ -1,6 +1,6 @@
 import { decodeFireBinary } from './binary'
 import { decodeLightningBinary } from './lightningBinary'
-import type { DecodedFire, DecodedLightning, EonetEvent, SeverePayload } from './types'
+import type { DecodedFire, DecodedLightning, EonetEvent, HurricanePayload, SeverePayload } from './types'
 
 export const DEFAULT_SOURCE = 'VIIRS_NOAA20_NRT'
 
@@ -91,6 +91,37 @@ export async function fetchSevere(): Promise<SeverePayload> {
       /* non-JSON error body */
     }
     throw new Error(detail || `severe request failed (${res.status})`)
+  }
+  return res.json()
+}
+
+/**
+ * NHC advisories land every 3–6 h and the proxy caches 5 min — polling
+ * faster buys nothing. Baked mode changes only when the cron redeploys.
+ */
+export const HURRICANES_REFRESH_MS = STATIC_MODE ? REFRESH_MS : 5 * 60_000
+
+export async function fetchHurricanes(): Promise<HurricanePayload> {
+  const url = STATIC_MODE
+    ? `${import.meta.env.BASE_URL}data/hurricanes.json?v=${Math.floor(Date.now() / HURRICANES_REFRESH_MS)}`
+    : '/api/hurricanes'
+  const res = await fetch(url)
+  if (!res.ok) {
+    if (STATIC_MODE) {
+      throw new Error(
+        res.status === 404
+          ? 'hurricanes not in the baked feed yet (next Pages deploy adds it)'
+          : `hurricanes request failed (${res.status})`,
+      )
+    }
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = typeof body?.error === 'string' ? body.error : ''
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail || `hurricanes request failed (${res.status})`)
   }
   return res.json()
 }

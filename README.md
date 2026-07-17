@@ -2,8 +2,8 @@
 
 **Live hazard globes** — a dark, rotating Earth in space with selectable data globes: glowing
 near-real-time fire detections from NASA satellites, live lightning from NOAA and EUMETSAT
-geostationary sensors, and US severe-weather warnings from the NWS. Mission-control
-aesthetics, GPU rendering, real data only.
+geostationary sensors, US severe-weather warnings from the NWS, and tropical cyclones with
+NHC forecast cones. Mission-control aesthetics, GPU rendering, real data only.
 
 > Build spec: [`docs/BRIEF.md`](docs/BRIEF.md) · Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
@@ -19,6 +19,7 @@ aesthetics, GPU rendering, real data only.
 | **5 — Stretch** | shareable deep links, CSV/GeoJSON export of the current view, country fire-count choropleth (Natural Earth), US perimeters (NIFC/WFIGS) | ✅ done (EU perimeters + Tauri deferred, see DECISIONS) |
 | **6 — Multi-globe: lightning** | globe switcher framework (`?globe=`), live GOES GLM lightning (20-second granules, keyless public S3) + Meteosat MTG-LI (Europe/Africa, free EUMETSAT key), rolling 60-min window with fresh-strike blooms, per-satellite freshness HUD, coverage-honesty rings | ✅ done |
 | **7 — Severe weather globe** | NWS tornado/severe warnings + watches (zone geometry resolved), SPC storm reports + Day-1 outlook shading, 60 s live poll, quiet-day honest empty states | ✅ done (US coverage; detail cards + timeline deferred) |
+| **8 — Hardening + hurricanes globe** | globe registry (adding a globe = compile-checked checklist), shared display controls on every globe, NHC active storms + forecast cone/track/points + past track, EONET global storms (48 h phantom filter), Saffir-Simpson category ramp, cone-honesty legend | ✅ done |
 
 ## Stack
 
@@ -119,7 +120,7 @@ unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 ### Deep links & dev params
 
 The URL mirrors the view — copy the address bar to share it:
-`?globe=lightning|severe` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
+`?globe=lightning|severe|hurricanes` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
 `?source=` · `?days=1..10` · `?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
 
 Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
@@ -130,5 +131,6 @@ Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
 Active fire data: **NASA FIRMS** (MODIS/VIIRS) · Lightning: **NOAA GOES GLM**
 (via the NOAA Open Data Dissemination S3 buckets) and **EUMETSAT Meteosat MTG-I1
 Lightning Imager** ·
-Severe weather: **NOAA NWS / SPC** · Named events: **NASA EONET** · Basemap:
+Severe weather: **NOAA NWS / SPC** · Hurricanes: **NOAA NHC** ·
+Named events & global storms: **NASA EONET** · Basemap:
 © [CARTO](https://carto.com/attributions), © OpenStreetMap contributors.

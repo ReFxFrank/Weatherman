@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import { FRP_STOPS } from '../lib/colors'
+import { CAT } from '../lib/hurricaneLayers'
 import { lightningColor } from '../lib/lightningBinary'
 import type { GlobeId } from '../store'
 
@@ -120,6 +121,64 @@ function SevereLegend(_props: { hasMtg?: boolean }) {
   )
 }
 
+/** Saffir-Simpson intensity ladder — the exact colors the layers use. */
+const HURRICANE_CATS = [
+  { label: 'TD', color: CAT.td },
+  { label: 'TS', color: CAT.ts },
+  { label: 'C1', color: CAT.c1 },
+  { label: 'C2', color: CAT.c2 },
+  { label: 'C3', color: CAT.c3 },
+  { label: 'C4', color: CAT.c4 },
+  { label: 'C5', color: CAT.c5 },
+]
+
+function HurricaneLegend(_props: { hasMtg?: boolean }) {
+  return (
+    <>
+      <div className="flex gap-0.5">
+        {HURRICANE_CATS.map((c) => (
+          <div key={c.label} className="flex-1">
+            <div className="h-2 rounded-sm" style={{ background: c.color }} />
+            <div className="mt-0.5 text-center font-mono text-[8px] text-slate-500">{c.label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">Saffir-Simpson category · max sustained wind</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{
+              background: CAT.ts,
+              boxShadow: `0 0 6px ${CAT.ts}`,
+            }}
+          />
+          <span className="text-[10px] text-slate-400">storm now · colored by intensity</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-0 w-3.5 shrink-0 border-t border-dashed border-purple-200/70" />
+          <span className="text-[10px] text-slate-400">forecast track · dots = predicted category</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-3.5 shrink-0 rounded-sm border border-violet-300/60 bg-violet-400/15" />
+          <span className="text-[10px] text-slate-400">forecast cone · to ~5 days out</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-0 w-3.5 shrink-0 border-t border-sky-300/50" />
+          <span className="text-[10px] text-slate-400">history · NHC past track / EONET global</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          The cone is the probable path of the storm CENTER (NHC historical
+          error), not the extent of impacts — hazards routinely reach outside
+          it. NHC covers the Atlantic &amp; E/C Pacific; elsewhere shows EONET
+          tracks only. Sources: NOAA NHC, NASA EONET.
+        </p>
+      </div>
+    </>
+  )
+}
+
 function FireLegend() {
   return (
     <>
@@ -182,6 +241,7 @@ const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
   fire: FireLegend,
   lightning: LightningLegend,
   severe: SevereLegend,
+  hurricanes: HurricaneLegend,
 }
 
 export function Legend({

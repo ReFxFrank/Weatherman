@@ -22,6 +22,7 @@ import {
 } from './firms'
 import { getLightningPayload } from './glm'
 import { getSeverePayload } from './severe'
+import { getHurricanePayload } from './hurricanes'
 
 // Honor HTTP(S)_PROXY/NO_PROXY if the host environment routes egress through a
 // proxy (no-op when those vars are unset).
@@ -146,6 +147,17 @@ app.get('/api/severe', async (c) => {
     return c.json(payload)
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'severe failure' }, 502)
+  }
+})
+
+/** Tropical cyclones (NHC + EONET) — JSON. */
+app.get('/api/hurricanes', async (c) => {
+  try {
+    const payload = await getHurricanePayload()
+    c.header('Cache-Control', 'public, max-age=120')
+    return c.json(payload)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'hurricanes failure' }, 502)
   }
 })
 

@@ -16,6 +16,7 @@ import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici'
 import { fetchAndEncode, PUBLIC_FEEDS, WINDOW_DAYS, type FeedWindow } from '../server/firms'
 import { fetchLightningOnce } from '../server/glm'
 import { fetchSevereOnce } from '../server/severe'
+import { fetchHurricanesOnce } from '../server/hurricanes'
 
 setGlobalDispatcher(new EnvHttpProxyAgent())
 
@@ -65,6 +66,25 @@ async function reusePrevious(file: string): Promise<{ count: number; bytes: Uint
     }
     if (typeof header.count !== 'number' || header.count <= 0) return null
     return { count: header.count, bytes, fetchedAt: header.fetchedAt ?? 'unknown' }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * JSON twin of reusePrevious(): refetch the currently-deployed copy of a
+ * JSON payload (validated by the presence of fetchedAt) so one upstream
+ * outage can't strip a dataset from the site. Returns null when there is
+ * no previous deploy or it isn't a valid payload.
+ */
+async function reusePreviousJson(file: string): Promise<{ fetchedAt: string; json: Record<string, unknown> } | null> {
+  if (!FALLBACK_BASE) return null
+  try {
+    const res = await fetch(`${FALLBACK_BASE}/data/${file}`, { signal: AbortSignal.timeout(30_000) })
+    if (!res.ok) return null
+    const json = (await res.json()) as Record<string, unknown>
+    if (typeof json.fetchedAt !== 'string' || !json.fetchedAt) return null
+    return { fetchedAt: json.fetchedAt, json }
   } catch {
     return null
   }
@@ -153,20 +173,59 @@ async function main() {
         `baked severe.json: ${JSON.stringify(payload.counts)} · outlook ${payload.outlook ? 'ok' : 'missing'}`,
       )
     } catch (err) {
-      try {
-        if (!FALLBACK_BASE) throw err
-        const res = await fetch(`${FALLBACK_BASE}/data/severe.json`, {
-          signal: AbortSignal.timeout(30_000),
-        })
-        if (!res.ok) throw err
-        const prev = (await res.json()) as { fetchedAt?: string; counts?: unknown }
-        if (!prev.fetchedAt) throw err
-        await writeFile(join(OUT_DIR, 'severe.json'), JSON.stringify({ ...prev, stale: true }))
-        severe = { file: 'severe.json', fetchedAt: prev.fetchedAt, counts: prev.counts }
+      const prev = await reusePreviousJson('severe.json')
+      if (prev) {
+        await writeFile(join(OUT_DIR, 'severe.json'), JSON.stringify({ ...prev.json, stale: true }))
+        severe = { file: 'severe.json', fetchedAt: prev.fetchedAt, counts: prev.json.counts }
         console.warn(`REUSED previous severe.json (from ${prev.fetchedAt})`)
-      } catch {
+      } else {
         failures.push(`severe.json: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
         console.error('FAILED severe.json:', err instanceof Error ? err.message.slice(0, 200) : err)
+      }
+    }
+  }
+
+  // Tropical cyclones (NHC + EONET): small JSON payload; zero active storms
+  // is a legitimate state (quiet season), so empties deploy. On fetch
+  // failure, reuse the currently-deployed copy.
+  let hurricanes: { file: string; fetchedAt: string; counts?: unknown } | null = null
+  if (process.env.SKIP_HURRICANES !== '1') {
+    try {
+      const payload = await fetchHurricanesOnce()
+      // A degraded build (ArcGIS/EONET down: sections empty because the
+      // SOURCE failed) must not replace a complete previous deploy — that
+      // would erode the fallback chain and can read as a false all-clear.
+      // Prefer the older complete copy; ship degraded-fresh only when there
+      // is no better option (still labeled via payload.degraded).
+      if (payload.degraded?.length) {
+        const prev = await reusePreviousJson('hurricanes.json')
+        if (prev && !(prev.json as { degraded?: string[] }).degraded?.length) {
+          await writeFile(join(OUT_DIR, 'hurricanes.json'), JSON.stringify({ ...prev.json, stale: true }))
+          hurricanes = { file: 'hurricanes.json', fetchedAt: prev.fetchedAt, counts: prev.json.counts }
+          console.warn(
+            `REUSED previous hurricanes.json (fresh build degraded: ${payload.degraded.join(', ')})`,
+          )
+        } else {
+          await writeFile(join(OUT_DIR, 'hurricanes.json'), JSON.stringify(payload))
+          hurricanes = { file: 'hurricanes.json', fetchedAt: payload.fetchedAt, counts: payload.counts }
+          console.warn(
+            `baked DEGRADED hurricanes.json (${payload.degraded.join(', ')} down; no complete previous deploy)`,
+          )
+        }
+      } else {
+        await writeFile(join(OUT_DIR, 'hurricanes.json'), JSON.stringify(payload))
+        hurricanes = { file: 'hurricanes.json', fetchedAt: payload.fetchedAt, counts: payload.counts }
+        console.log(`baked hurricanes.json: ${JSON.stringify(payload.counts)}`)
+      }
+    } catch (err) {
+      const prev = await reusePreviousJson('hurricanes.json')
+      if (prev) {
+        await writeFile(join(OUT_DIR, 'hurricanes.json'), JSON.stringify({ ...prev.json, stale: true }))
+        hurricanes = { file: 'hurricanes.json', fetchedAt: prev.fetchedAt, counts: prev.json.counts }
+        console.warn(`REUSED previous hurricanes.json (from ${prev.fetchedAt})`)
+      } else {
+        failures.push(`hurricanes.json: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+        console.error('FAILED hurricanes.json:', err instanceof Error ? err.message.slice(0, 200) : err)
       }
     }
   }
@@ -177,6 +236,7 @@ async function main() {
     files: baked,
     lightning,
     severe,
+    hurricanes,
     failures,
   }
   await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))
@@ -186,7 +246,7 @@ async function main() {
   // reused, or lightning. (A deploy with data beats no deploy: a skipped run
   // leaves whatever won the last race live, and stale-labeled data beats a
   // broken site.)
-  if (baked.length === 0 && !lightning && !severe) {
+  if (baked.length === 0 && !lightning && !severe && !hurricanes) {
     console.error('nothing baked or reusable — refusing to deploy an empty feed')
     process.exit(1)
   }
