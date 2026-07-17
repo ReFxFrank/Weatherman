@@ -332,6 +332,13 @@ Highlights of what the review caught before it shipped further:
   cold-start shows "acquiring…" not a false dual-outage "DARK", permanent
   fetch failures surface as "(N gaps)", a dark satellite's coverage ring
   restyles red, HUD lag chips re-render on a 30 s tick.
+- Post-verification straggler (confirmed against deck 9.3 source): the
+  binary-attribute descriptor objects were rebuilt on every ~30 fps pulse
+  tick, and deck's skip-reupload check compares descriptor *identity* — so
+  every tick re-uploaded every GPU buffer on BOTH globes (~5 MB/frame
+  lightning, up to ~30 MB/frame fire). Descriptors are now WeakMap-cached
+  per payload, making the per-tick rebuild the uniform-only update the code
+  always claimed to be.
 - Deferred knowingly: shared-shell controls (projection/basemap/quality/
   terminator) currently live only in the fire-gated FilterPanel, so they are
   unreachable on the lightning globe — lands with the lightning control

@@ -87,6 +87,38 @@ interface PulsePoint {
   filterValue: [number, number, number, number]
 }
 
+/**
+ * Binary-attribute descriptor, cached per dataset so it is REFERENTIALLY
+ * STABLE across the ~30fps pulse rebuilds. deck's skip-reupload check
+ * compares the descriptor object identity, not the typed arrays inside —
+ * a fresh `{value, size}` object every build re-uploads every GPU buffer
+ * every tick (review finding, verified against deck 9.3 source).
+ */
+const sharedDataCache = new WeakMap<
+  FireData,
+  { length: number; attributes: Record<string, { value: Float32Array | Uint8Array; size: number; normalized?: boolean }> }
+>()
+
+function sharedDataFor(data: FireData) {
+  let sd = sharedDataCache.get(data)
+  if (!sd) {
+    sd = {
+      length: data.count,
+      attributes: {
+        getPosition: { value: data.positions, size: 3 },
+        getFillColor: { value: data.colors, size: 4, normalized: true },
+        getRadius: { value: data.radii, size: 1 },
+        // size MUST match the extension's filterSize (4) — a mismatched stride
+        // makes the GPU read garbage filter values and cull almost everything
+        // (this shipped briefly in Phase 3; caught by Phase 4's visual checks).
+        getFilterValue: { value: data.filterValues, size: 4 },
+      },
+    }
+    sharedDataCache.set(data, sd)
+  }
+  return sd
+}
+
 /** The ~16 highest-FRP detections get a gentle breathing halo. Cached per dataset. */
 const pulseCache = new WeakMap<FireData, PulsePoint[]>()
 
@@ -135,8 +167,6 @@ export function buildFireLayers({
   pulse = 0,
   beforeId,
 }: FireLayerOpts): Layer[] {
-  const { count, positions, colors, radii, filterValues } = data
-
   // Cross-fade band around the swap threshold (§5.1: no hard cut).
   const swap = smoothstep(HEAT_TO_POINTS_ZOOM - 0.7, HEAT_TO_POINTS_ZOOM + 0.7, zoom)
   const heatPresence = 1 - swap
@@ -147,6 +177,8 @@ export function buildFireLayers({
   const igniteEase = 1 - Math.pow(1 - Math.min(1, Math.max(0, ignite)), 3)
   const igniteScale = 0.25 + 0.75 * igniteEase
 
+  const sharedData = sharedDataFor(data)
+
   // High-zoom detail (§5.1): FRP-driven size is a far/mid-zoom affordance —
   // close up it slams into the pixel caps and every detection becomes the
   // same giant disc, mushing into its neighbors (VIIRS detections sit only
@@ -156,19 +188,6 @@ export function buildFireLayers({
   const detail = smoothstep(7, 10, zoom)
   const lerp = (a: number, b: number) => a + (b - a) * detail
   const sizeTaper = 1 - 0.72 * detail
-
-  const sharedData = {
-    length: count,
-    attributes: {
-      getPosition: { value: positions, size: 3 },
-      getFillColor: { value: colors, size: 4, normalized: true },
-      getRadius: { value: radii, size: 1 },
-      // size MUST match the extension's filterSize (4) — a mismatched stride
-      // makes the GPU read garbage filter values and cull almost everything
-      // (this shipped briefly in Phase 3; caught by Phase 4's visual checks).
-      getFilterValue: { value: filterValues, size: 4 },
-    },
-  }
 
   const nightRange: [number, number] =
     filters.dayNight === 'day' ? [0, 0] : filters.dayNight === 'night' ? [1, 1] : [0, 1]

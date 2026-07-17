@@ -26,6 +26,33 @@ export { FRESH_MIN }
 
 const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 3 })]
 
+/** Referentially-stable binary-attribute descriptor per payload — a fresh
+ *  descriptor object every pulse tick would make deck re-upload every GPU
+ *  buffer every tick (review finding; same fix as fireLayers.ts). */
+const sharedDataCache = new WeakMap<
+  LightningData,
+  { length: number; attributes: Record<string, { value: Float32Array | Uint8Array; size: number; normalized?: boolean }> }
+>()
+
+function sharedDataFor(data: LightningData) {
+  let sd = sharedDataCache.get(data)
+  if (!sd) {
+    sd = {
+      length: data.count,
+      attributes: {
+        getPosition: { value: data.positionsLifted, size: 3 },
+        getFillColor: { value: data.colors, size: 4, normalized: true },
+        getRadius: { value: data.radii, size: 1 },
+        // size MUST match the extension's filterSize (3) — see the fire
+        // layers' Phase-3 postmortem for what a mismatched stride does.
+        getFilterValue: { value: data.filterValues, size: 3 },
+      },
+    }
+    sharedDataCache.set(data, sd)
+  }
+  return sd
+}
+
 export interface LightningLayerOpts {
   data: LightningData
   zoom: number
@@ -48,7 +75,7 @@ export function buildLightningLayers({
   pulse = 0,
   beforeId,
 }: LightningLayerOpts): Layer[] {
-  const { count, positionsLifted, colors, radii, filterValues, meta } = data
+  const { meta } = data
 
   const fetchSec = Math.floor(Date.parse(meta.fetchedAt) / 1000) || nowSec
   // Live payloads slide their window with the wall clock. Baked payloads
@@ -65,17 +92,7 @@ export function buildLightningLayers({
 
   const igniteEase = 1 - Math.pow(1 - Math.min(1, Math.max(0, ignite)), 3)
 
-  const sharedData = {
-    length: count,
-    attributes: {
-      getPosition: { value: positionsLifted, size: 3 },
-      getFillColor: { value: colors, size: 4, normalized: true },
-      getRadius: { value: radii, size: 1 },
-      // size MUST match the extension's filterSize (3) — see the fire layers'
-      // Phase-3 postmortem for what a mismatched stride does.
-      getFilterValue: { value: filterValues, size: 3 },
-    },
-  }
+  const sharedData = sharedDataFor(data)
 
   // No UI filters energy yet — the range exists only to fill the filter
   // triplet, so it must never cull (a floor of 0 would drop any flash whose
