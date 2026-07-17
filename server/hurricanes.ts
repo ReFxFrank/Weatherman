@@ -223,11 +223,15 @@ async function buildPayload(mode: HurricanePayload['mode']): Promise<HurricanePa
     layer(11, 'past tracks', ['ss', 'stormtype', 'stormnum', 'binnumber']),
   ])
   const nhcNames = new Set(storms.map((s) => s.name.toLowerCase()))
-  const global = await fetchGlobalStorms(nhcNames).catch((err) => {
-    console.error('[hurricanes] EONET failed:', (err as Error).message)
-    degraded.push('eonet')
-    return [] as GlobalStorm[]
-  })
+  const global = await fetchGlobalStorms(nhcNames)
+    // one retry: EONET flaps from CI runners ("fetch failed" observed on the
+    // first production bake) and a blip shouldn't degrade a 20-min cycle
+    .catch(() => fetchGlobalStorms(nhcNames))
+    .catch((err) => {
+      console.error('[hurricanes] EONET failed:', (err as Error).message)
+      degraded.push('eonet')
+      return [] as GlobalStorm[]
+    })
 
   let strongestName: string | null = null
   let strongestKt = 0
