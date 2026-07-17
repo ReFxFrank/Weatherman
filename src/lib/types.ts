@@ -124,6 +124,40 @@ export interface LightningData extends DecodedLightning {
   filterValues: Float32Array
 }
 
+// ---------------------------------------------------------------------------
+// Severe weather (NWS/SPC) — mirrors server/severe.ts
+// ---------------------------------------------------------------------------
+
+export type SevereKind = 'tornado-warning' | 'severe-warning' | 'tornado-watch' | 'severe-watch'
+
+export interface SevereReport {
+  time: string
+  lat: number
+  lon: number
+  mag: string
+  location: string
+  state: string
+}
+
+export interface SevereCounts {
+  tornadoWarnings: number
+  severeWarnings: number
+  tornadoWatches: number
+  severeWatches: number
+  reports: number
+}
+
+export interface SeverePayload {
+  source: 'nws-spc'
+  mode: 'live' | 'baked'
+  fetchedAt: string
+  alerts: GeoJSON.FeatureCollection
+  outlook: GeoJSON.FeatureCollection | null
+  reports: { torn: SevereReport[]; wind: SevereReport[]; hail: SevereReport[] }
+  counts: SevereCounts
+  stale?: boolean
+}
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

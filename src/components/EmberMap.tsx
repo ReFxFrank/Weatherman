@@ -3,12 +3,13 @@ import Map, { useControl } from 'react-map-gl/maplibre'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import type { DecodedFire, EonetEvent, FireData, LightningData } from '../lib/types'
+import type { DecodedFire, EonetEvent, FireData, LightningData, SeverePayload } from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
 import { buildLightningLayers } from '../lib/lightningLayers'
 import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
 import { syncGlmCoverage } from '../lib/coverage'
+import { syncSevereLayers } from '../lib/severeLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -90,6 +91,7 @@ export function EmberMap({
   data,
   full,
   lightning,
+  severe,
   events,
   quality,
   selectedIndex,
@@ -102,6 +104,8 @@ export function EmberMap({
   full: DecodedFire | undefined
   /** lightning render set (Phase 6), undefined until its globe is active */
   lightning: LightningData | undefined
+  /** severe-weather payload (NWS/SPC), undefined until its globe is active */
+  severe: SeverePayload | undefined
   events: EonetEvent[] | undefined
   quality: QualityConfig
   /** validated selection (App checks payload identity + active filters) */
@@ -192,6 +196,7 @@ export function EmberMap({
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
     coverageSats,
+    severe,
   })
   styleStateRef.current = {
     projection,
@@ -206,6 +211,7 @@ export function EmberMap({
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
     coverageSats,
+    severe,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -221,6 +227,10 @@ export function EmberMap({
       visible: s.globe === 'lightning',
       sats: s.coverageSats,
     })
+    syncSevereLayers(map, s.severe ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'severe',
+    })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
     syncSelectionMarker(map, s.selectedPoint)
@@ -229,7 +239,8 @@ export function EmberMap({
   // Entrance: once the globe is up and the ACTIVE globe's data has arrived,
   // ease down from orbit onto the North America home view while the layers
   // ignite (§5.7). Deep-linked ?globe=lightning must not wait on fire data.
-  const entranceReady = globe === 'lightning' ? Boolean(lightning) : Boolean(full)
+  const entranceReady =
+    globe === 'lightning' ? Boolean(lightning) : globe === 'severe' ? Boolean(severe) : Boolean(full)
   useEffect(() => {
     if (!mapLoaded || !entranceReady || entranceStarted.current) return
     const map = mapRef.current?.getMap()
@@ -328,6 +339,7 @@ export function EmberMap({
     perimeters,
     showPerimeters,
     coverageSats,
+    severe,
   ])
 
   // The terminator moves with the sun — refresh its geometry every minute.
@@ -420,6 +432,7 @@ export function EmberMap({
   const layers = useMemo(() => {
     // splats render beneath the event reticles once those layers exist
     const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
+    if (globe === 'severe') return [] // all-native layers (polygons + points)
     if (globe === 'lightning') {
       return lightning
         ? buildLightningLayers({

@@ -20,8 +20,8 @@ export type SourceId = (typeof SOURCES)[number]['id']
 export type DayNight = 'all' | 'day' | 'night'
 export type Projection = 'globe' | 'mercator'
 export type Basemap = 'dark' | 'dark-nolabels'
-/** Which data globe is on screen (Phase 6): fire watch or lightning. */
-export type GlobeId = 'fire' | 'lightning'
+/** Which data globe is on screen: fire watch, lightning, or severe weather. */
+export type GlobeId = 'fire' | 'lightning' | 'severe'
 
 export interface EmberState {
   /** active globe — the shell (camera, terminator, search) is shared */
@@ -80,7 +80,8 @@ function stateFromUrl(): Partial<EmberState> {
   if (conf === '1' || conf === '2') out.confMin = Number(conf) as 1 | 2
   const dn = q.get('dn')
   if (dn === 'day' || dn === 'night') out.dayNight = dn
-  if (q.get('globe') === 'lightning') out.globe = 'lightning'
+  const g = q.get('globe')
+  if (g === 'lightning' || g === 'severe') out.globe = g
   return out
 }
 

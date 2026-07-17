@@ -66,6 +66,59 @@ function LightningLegend({ hasMtg = false }: { hasMtg?: boolean }) {
   )
 }
 
+/** SPC categorical risk ladder — official SPC colors, dimmed by the fill layer. */
+const OUTLOOK_CATS = [
+  { label: 'TSTM', color: '#C1E9C1' },
+  { label: 'MRGL', color: '#66A366' },
+  { label: 'SLGT', color: '#FFE066' },
+  { label: 'ENH', color: '#FFA366' },
+  { label: 'MDT', color: '#E06666' },
+  { label: 'HIGH', color: '#EE99EE' },
+]
+
+function SevereLegend() {
+  return (
+    <>
+      <div className="flex gap-0.5">
+        {OUTLOOK_CATS.map((c) => (
+          <div key={c.label} className="flex-1">
+            <div className="h-2 rounded-sm opacity-70" style={{ background: c.color }} />
+            <div className="mt-0.5 text-center font-mono text-[8px] text-slate-500">{c.label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">SPC day-1 convective risk outlook</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-3.5 shrink-0 rounded-sm bg-red-500/40 ring-1 ring-red-500" />
+          <span className="text-[10px] text-slate-400">tornado warning · happening now</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-3.5 shrink-0 rounded-sm bg-amber-500/30 ring-1 ring-amber-500" />
+          <span className="text-[10px] text-slate-400">severe thunderstorm warning</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-3.5 shrink-0 rounded-sm border border-dashed border-red-300/70" />
+          <span className="text-[10px] text-slate-400">watch · conditions favorable</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="flex shrink-0 gap-1">
+            <span className="h-2 w-2 rounded-full bg-red-400" />
+            <span className="h-2 w-2 rounded-full bg-blue-400" />
+            <span className="h-2 w-2 rounded-full bg-slate-200" />
+          </span>
+          <span className="text-[10px] text-slate-400">reports today: tornado · wind · hail</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          US coverage — NWS warnings exist where warning infrastructure exists.
+          Reports reset at 12Z daily. Sources: NWS, SPC.
+        </p>
+      </div>
+    </>
+  )
+}
+
 export function Legend({
   className = 'w-60',
   globe = 'fire',
@@ -75,6 +128,14 @@ export function Legend({
   globe?: GlobeId
   hasMtg?: boolean
 }) {
+  if (globe === 'severe') {
+    return (
+      <div className={`${className} px-4 py-3`}>
+        <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
+        <SevereLegend />
+      </div>
+    )
+  }
   if (globe === 'lightning') {
     return (
       <div className={`${className} px-4 py-3`}>

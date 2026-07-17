@@ -6,8 +6,10 @@ import {
   fetchFireDecoded,
   fetchLightningDecoded,
   fetchQuota,
+  fetchSevere,
   LIGHTNING_REFRESH_MS,
   REFRESH_MS,
+  SEVERE_REFRESH_MS,
 } from './lib/api'
 import { deriveRenderAttributes } from './lib/binary'
 import { deriveLightningAttributes } from './lib/lightningBinary'
@@ -89,6 +91,21 @@ export default function App() {
     () => (lightningDecoded ? deriveLightningAttributes(lightningDecoded, quality.maxPoints) : undefined),
     [lightningDecoded, quality],
   )
+
+  // Severe weather globe (NWS/SPC): tiny JSON payload, fast poll — warnings
+  // appear within seconds of issuance.
+  const {
+    data: severeData,
+    isLoading: severeLoading,
+    isError: severeError,
+    error: severeErr,
+  } = useQuery({
+    queryKey: ['severe'],
+    queryFn: fetchSevere,
+    placeholderData: keepPreviousData,
+    refetchInterval: SEVERE_REFRESH_MS,
+    enabled: globe === 'severe',
+  })
 
   // The satellite-lag chips are wall-clock readouts — re-render them between
   // refetches (which can be 10 min apart on Pages) so "live 1m" can't quietly
@@ -262,6 +279,7 @@ export default function App() {
         data={data}
         full={decoded}
         lightning={globe === 'lightning' ? lightningData : undefined}
+        severe={globe === 'severe' ? severeData : undefined}
         events={events}
         quality={quality}
         selectedIndex={validSelection}
@@ -307,6 +325,24 @@ export default function App() {
 
       {/* status chips: error / stale / empty (§5.6 graceful states) */}
       <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex max-w-[92vw] -translate-x-1/2 flex-col items-center gap-2">
+        {globe === 'severe' && severeError && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
+            <CloudOff className="h-3.5 w-3.5 shrink-0" />
+            Severe weather feed unreachable — retrying automatically
+          </div>
+        )}
+        {globe === 'severe' &&
+          severeData &&
+          !severeError &&
+          severeData.counts.tornadoWarnings +
+            severeData.counts.severeWarnings +
+            severeData.counts.tornadoWatches +
+            severeData.counts.severeWatches ===
+            0 && (
+            <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+              No active tornado or severe thunderstorm alerts — shading shows today's SPC risk outlook
+            </div>
+          )}
         {globe === 'lightning' && lightningError && (
           <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
             <CloudOff className="h-3.5 w-3.5 shrink-0" />
@@ -353,7 +389,32 @@ export default function App() {
         </div>
         <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-slate-400 max-sm:text-[10px]">
           <Satellite className="h-3 w-3 shrink-0 text-slate-500" />
-          {globe === 'fire' ? (
+          {globe === 'severe' ? (
+            <>
+              {severeLoading && (
+                <span className="animate-pulse text-slate-300">ACQUIRING NWS/SPC FEED…</span>
+              )}
+              {severeError && (
+                <span className="text-red-400">
+                  FEED ERROR — {severeErr instanceof Error ? severeErr.message.slice(0, 60) : 'unknown'}
+                </span>
+              )}
+              {severeData && !severeError && (
+                <span>
+                  <span className={severeData.counts.tornadoWarnings > 0 ? 'text-red-400' : 'text-slate-300'}>
+                    {severeData.counts.tornadoWarnings} TOR
+                  </span>
+                  {' · '}
+                  <span className={severeData.counts.severeWarnings > 0 ? 'text-amber-300' : 'text-slate-300'}>
+                    {severeData.counts.severeWarnings} SVR
+                  </span>{' '}
+                  warnings · {severeData.counts.tornadoWatches + severeData.counts.severeWatches} watches ·{' '}
+                  {severeData.counts.reports} reports today
+                  {severeData.stale ? ' · STALE' : ''}
+                </span>
+              )}
+            </>
+          ) : globe === 'fire' ? (
             <>
               {isLoading && <span className="animate-pulse text-slate-300">ACQUIRING SATELLITE FEED…</span>}
               {isError && (
@@ -452,6 +513,13 @@ export default function App() {
                 {' '}· upd {new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z
               </span>
             )}
+          </div>
+        )}
+        {globe === 'severe' && severeData && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            NWS warnings · SPC reports/outlook · US coverage ·{' '}
+            {severeData.mode === 'live' ? 'upd' : 'as of'}{' '}
+            {new Date(severeData.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
         <GlobeSwitcher className="mt-2" />

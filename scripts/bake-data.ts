@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici'
 import { fetchAndEncode, PUBLIC_FEEDS, WINDOW_DAYS, type FeedWindow } from '../server/firms'
 import { fetchLightningOnce } from '../server/glm'
+import { fetchSevereOnce } from '../server/severe'
 
 setGlobalDispatcher(new EnvHttpProxyAgent())
 
@@ -139,11 +140,43 @@ async function main() {
     }
   }
 
+  // Severe weather (NWS/SPC, US): small JSON payload; zero active warnings
+  // is a legitimate quiet-day state, so unlike lightning an "empty" result
+  // still deploys. On fetch failure, reuse the currently-deployed copy.
+  let severe: { file: string; fetchedAt: string; counts?: unknown } | null = null
+  if (process.env.SKIP_SEVERE !== '1') {
+    try {
+      const payload = await fetchSevereOnce()
+      await writeFile(join(OUT_DIR, 'severe.json'), JSON.stringify(payload))
+      severe = { file: 'severe.json', fetchedAt: payload.fetchedAt, counts: payload.counts }
+      console.log(
+        `baked severe.json: ${JSON.stringify(payload.counts)} · outlook ${payload.outlook ? 'ok' : 'missing'}`,
+      )
+    } catch (err) {
+      try {
+        if (!FALLBACK_BASE) throw err
+        const res = await fetch(`${FALLBACK_BASE}/data/severe.json`, {
+          signal: AbortSignal.timeout(30_000),
+        })
+        if (!res.ok) throw err
+        const prev = (await res.json()) as { fetchedAt?: string; counts?: unknown }
+        if (!prev.fetchedAt) throw err
+        await writeFile(join(OUT_DIR, 'severe.json'), JSON.stringify({ ...prev, stale: true }))
+        severe = { file: 'severe.json', fetchedAt: prev.fetchedAt, counts: prev.counts }
+        console.warn(`REUSED previous severe.json (from ${prev.fetchedAt})`)
+      } catch {
+        failures.push(`severe.json: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+        console.error('FAILED severe.json:', err instanceof Error ? err.message.slice(0, 200) : err)
+      }
+    }
+  }
+
   const manifest = {
     generatedAt: new Date().toISOString(),
     hasKey: Boolean(MAP_KEY),
     files: baked,
     lightning,
+    severe,
     failures,
   }
   await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))

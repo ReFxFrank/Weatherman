@@ -361,3 +361,32 @@ Highlights of what the review caught before it shipped further:
   terminator) currently live only in the fire-gated FilterPanel, so they are
   unreachable on the lightning globe — lands with the lightning control
   panel phase.
+
+
+## Phase 7 notes — the severe weather globe (tornado watch)
+
+- **Sources** (all keyless, US-government public domain, live-verified):
+  NWS api.weather.gov active alerts filtered to tornado/severe-thunderstorm
+  warnings + watches (mandatory User-Agent header; 60 s live poll — warnings
+  land within seconds of issuance); SPC storm reports (today's torn/wind/hail
+  CSVs, header-only on quiet days, reset 12Z); SPC Day-1 categorical outlook
+  GeoJSON with the official risk colors in-band.
+- **Watch geometry**: warnings are storm-based polygons with inline geometry;
+  watches are zone-based and usually ship `geometry: null` — shapes resolve
+  via each alert's `affectedZones` URLs (verified live: alert → zone URL →
+  Polygon), merged into a MultiPolygon, with zone shapes cached in-process.
+  Alerts whose zones all fail to resolve are skipped rather than mis-drawn.
+- **JSON, not binary**: this globe is a few hundred polygons/points (KBs);
+  the columnar wire format exists for hundreds of thousands of splats.
+  Everything renders as native MapLibre layers (outlook fill → watch
+  dash/fill → warning fill/line → report circles), anchored in the same
+  beforeId stack as every other native layer.
+- **Quiet-day honesty**: zero active alerts is a legitimate state (severe
+  weather peaks in the US evening). The HUD keeps the zero counts visible,
+  a chip explains that the shading is the day's SPC risk outlook, and
+  reports carry "today (resets 12Z)" semantics. Coverage honesty: US-only —
+  warnings exist where warning infrastructure exists; said in the legend.
+- **Deferred**: warning detail cards (click a polygon → headline/expiry),
+  Canada (ECCC CAP) and Europe (MeteoAlarm — 17 MB feeds, unverifiable
+  redistribution terms), a convective-day timeline. The severe payload
+  reuses the deployed copy on upstream failure, like the fire bins.

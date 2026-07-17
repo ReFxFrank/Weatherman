@@ -21,6 +21,7 @@ import {
   type PayloadMeta,
 } from './firms'
 import { getLightningPayload } from './glm'
+import { getSeverePayload } from './severe'
 
 // Honor HTTP(S)_PROXY/NO_PROXY if the host environment routes egress through a
 // proxy (no-op when those vars are unset).
@@ -134,6 +135,17 @@ app.get('/api/lightning', (c) => {
     return c.body(entry.bin.slice().buffer as ArrayBuffer)
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'glm failure' }, 502)
+  }
+})
+
+/** Severe weather (NWS warnings/watches + SPC reports/outlook) — JSON. */
+app.get('/api/severe', async (c) => {
+  try {
+    const payload = await getSeverePayload()
+    c.header('Cache-Control', 'public, max-age=30')
+    return c.json(payload)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'severe failure' }, 502)
   }
 })
 

@@ -1,4 +1,4 @@
-import { Flame, Zap } from 'lucide-react'
+import { Flame, Tornado, Zap } from 'lucide-react'
 import { setEmber, useEmber, type GlobeId } from '../store'
 
 /**
@@ -25,12 +25,18 @@ const GLOBES: Array<{
     Icon: Zap,
     onCls: 'border-sky-400/40 bg-sky-400/15 text-sky-300',
   },
+  {
+    id: 'severe',
+    label: 'SEVERE',
+    Icon: Tornado,
+    onCls: 'border-red-400/40 bg-red-400/15 text-red-300',
+  },
 ]
 
 export function GlobeSwitcher({ className = '' }: { className?: string }) {
   const globe = useEmber((s) => s.globe)
   return (
-    <div className={`flex gap-1 ${className}`} role="tablist" aria-label="Data globe">
+    <div className={`flex flex-wrap gap-1 ${className}`} role="tablist" aria-label="Data globe">
       {GLOBES.map(({ id, label, Icon, onCls }) => (
         <button
           key={id}
