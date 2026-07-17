@@ -92,6 +92,7 @@ export function EmberMap({
   full,
   lightning,
   severe,
+  entranceReady,
   events,
   quality,
   selectedIndex,
@@ -106,6 +107,10 @@ export function EmberMap({
   lightning: LightningData | undefined
   /** severe-weather payload (NWS/SPC), undefined until its globe is active */
   severe: SeverePayload | undefined
+  /** active globe's data arrived OR its query errored — the entrance must
+   *  not wait forever on a feed that is down (review finding); App owns the
+   *  per-globe query state, so App computes this */
+  entranceReady: boolean
   events: EonetEvent[] | undefined
   quality: QualityConfig
   /** validated selection (App checks payload identity + active filters) */
@@ -236,11 +241,10 @@ export function EmberMap({
     syncSelectionMarker(map, s.selectedPoint)
   }
 
-  // Entrance: once the globe is up and the ACTIVE globe's data has arrived,
-  // ease down from orbit onto the North America home view while the layers
-  // ignite (§5.7). Deep-linked ?globe=lightning must not wait on fire data.
-  const entranceReady =
-    globe === 'lightning' ? Boolean(lightning) : globe === 'severe' ? Boolean(severe) : Boolean(full)
+  // Entrance: once the globe is up and the ACTIVE globe's data has arrived
+  // (or its feed has definitively errored — never wait forever), ease down
+  // from orbit onto the North America home view while the layers ignite
+  // (§5.7). App computes entranceReady from the active globe's query.
   useEffect(() => {
     if (!mapLoaded || !entranceReady || entranceStarted.current) return
     const map = mapRef.current?.getMap()
@@ -299,8 +303,10 @@ export function EmberMap({
   }, [cameraSettled])
 
   // Gentle pulse driver for the top-FRP halos — ~30fps, paused when hidden.
+  // The severe globe renders no deck layers, so don't burn 30 renders/s on it
+  // (review finding).
   useEffect(() => {
-    if (!cameraSettled || ignite < 1) return
+    if (!cameraSettled || ignite < 1 || globe === 'severe') return
     let raf = 0
     let last = 0
     const tick = (now: number) => {
@@ -311,7 +317,7 @@ export function EmberMap({
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [cameraSettled, ignite])
+  }, [cameraSettled, ignite, globe])
 
   // Projection toggle (§5.1: globe default, flat for regional drill-down).
   useEffect(() => {
@@ -339,8 +345,20 @@ export function EmberMap({
     perimeters,
     showPerimeters,
     coverageSats,
-    severe,
   ])
+
+  // The severe payload refreshes every ~60 s — re-sync ONLY its own layers,
+  // not the whole native stack (EONET re-serialize + terminator trig for
+  // zero visual change; review finding).
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncSevereLayers(map, severe ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'severe',
+    })
+  }, [mapLoaded, severe, globe])
 
   // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {

@@ -145,6 +145,8 @@ export interface SevereCounts {
   tornadoWatches: number
   severeWatches: number
   reports: number
+  /** alerts in the feed whose geometry could not be resolved (not drawn) */
+  unmapped: number
 }
 
 export interface SeverePayload {
@@ -156,6 +158,8 @@ export interface SeverePayload {
   reports: { torn: SevereReport[]; wind: SevereReport[]; hail: SevereReport[] }
   counts: SevereCounts
   stale?: boolean
+  /** client-derived setData key (expiry filtering re-keys between fetches) */
+  renderKey?: string
 }
 
 /** A curated named wildfire event from NASA EONET v3. */

@@ -64,14 +64,17 @@ export function syncSevereLayers(
   { beforeId, visible }: { beforeId?: string; visible: boolean },
 ): void {
   try {
-    const key = payload ? payload.fetchedAt : 'empty'
-    const ensureSource = (id: string, data: GeoJSON.FeatureCollection) => {
-      if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data })
-      else if (key !== lastKey) (map.getSource(id) as GeoJSONSource).setData(data)
+    // renderKey re-keys between fetches when the client filters expired
+    // alerts out; data thunks defer FeatureCollection building until a key
+    // change actually needs it (review findings)
+    const key = payload ? (payload.renderKey ?? payload.fetchedAt) : 'empty'
+    const ensureSource = (id: string, data: () => GeoJSON.FeatureCollection) => {
+      if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: data() })
+      else if (key !== lastKey) (map.getSource(id) as GeoJSONSource).setData(data())
     }
-    ensureSource(SRC_OUTLOOK, payload?.outlook ?? EMPTY_FC)
-    ensureSource(SRC_ALERTS, payload?.alerts ?? EMPTY_FC)
-    ensureSource(SRC_REPORTS, payload ? reportsFc(payload) : EMPTY_FC)
+    ensureSource(SRC_OUTLOOK, () => payload?.outlook ?? EMPTY_FC)
+    ensureSource(SRC_ALERTS, () => payload?.alerts ?? EMPTY_FC)
+    ensureSource(SRC_REPORTS, () => (payload ? reportsFc(payload) : EMPTY_FC))
     lastKey = key
 
     const before = beforeId && map.getLayer(beforeId) ? beforeId : undefined

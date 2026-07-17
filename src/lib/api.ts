@@ -76,11 +76,21 @@ export async function fetchSevere(): Promise<SeverePayload> {
     : '/api/severe'
   const res = await fetch(url)
   if (!res.ok) {
-    throw new Error(
-      STATIC_MODE && res.status === 404
-        ? 'severe weather not in the baked feed yet (next Pages deploy adds it)'
-        : `severe request failed (${res.status})`,
-    )
+    if (STATIC_MODE) {
+      throw new Error(
+        res.status === 404
+          ? 'severe weather not in the baked feed yet (next Pages deploy adds it)'
+          : `severe request failed (${res.status})`,
+      )
+    }
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = typeof body?.error === 'string' ? body.error : ''
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail || `severe request failed (${res.status})`)
   }
   return res.json()
 }

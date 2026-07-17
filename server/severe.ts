@@ -48,6 +48,8 @@ export interface SevereCounts {
   tornadoWatches: number
   severeWatches: number
   reports: number
+  /** alerts in the feed whose geometry could not be resolved (not drawn) */
+  unmapped: number
 }
 
 export interface SeverePayload {
@@ -86,7 +88,11 @@ async function resolveZones(urls: string[]): Promise<void> {
         const url = missing[i++]
         try {
           const z = (await fetchJson(url)) as { geometry?: GeoJSON.Geometry | null }
-          zoneCache.set(url, z.geometry ?? null)
+          // only cache real shapes: a 200 with null geometry (content
+          // negotiation fallback, partial outage) must retry next refresh —
+          // caching it would drop that zone from every future watch until
+          // the process restarts (review finding)
+          if (z.geometry) zoneCache.set(url, z.geometry)
         } catch {
           // transient failure: leave uncached so a later refresh retries
         }
@@ -153,19 +159,26 @@ async function fetchAlerts(): Promise<{ fc: GeoJSON.FeatureCollection; counts: S
     tornadoWatches: 0,
     severeWatches: 0,
     reports: 0,
+    unmapped: 0,
   }
   const out: GeoJSON.Feature[] = []
   for (const f of feats) {
     const kind = kindOf(f.properties.event ?? '')
     if (!kind) continue
-    const geometry =
-      f.geometry ??
-      mergePolygons((f.properties.affectedZones ?? []).map((z) => zoneCache.get(z)))
-    if (!geometry) continue // zone resolution failed entirely — skip honestly
+    // Count from the FEED, before any geometry skip: an alert whose zones
+    // failed to resolve must still count, or a zone-endpoint outage during
+    // an active watch renders a confident false all-clear (review finding).
     if (kind === 'tornado-warning') counts.tornadoWarnings++
     else if (kind === 'severe-warning') counts.severeWarnings++
     else if (kind === 'tornado-watch') counts.tornadoWatches++
     else counts.severeWatches++
+    const geometry =
+      f.geometry ??
+      mergePolygons((f.properties.affectedZones ?? []).map((z) => zoneCache.get(z)))
+    if (!geometry) {
+      counts.unmapped++
+      continue // undrawable, but counted + surfaced via counts.unmapped
+    }
     out.push({
       type: 'Feature',
       geometry,
@@ -239,9 +252,22 @@ async function fetchOutlook(): Promise<GeoJSON.FeatureCollection | null> {
 // ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 60_000
+/** after a failed build, serve stale for this long before re-trying upstream —
+ *  otherwise every 60 s poll rides the full 45 s alerts timeout during an
+ *  outage and the server hammers the failing endpoint (review finding) */
+const FAIL_BACKOFF_MS = 30_000
 let cached: { at: number; payload: SeverePayload } | null = null
 let lastGood: SeverePayload | null = null
+let lastFailAt = 0
 let inflight: Promise<SeverePayload> | null = null
+
+/** slow-moving sources keep a private TTL under the 60 s payload cache:
+ *  the outlook changes ~5x/day and report CSVs every ~5 min — refetching
+ *  them every rebuild is pure waste (review finding) */
+let outlookCache: { at: number; value: GeoJSON.FeatureCollection | null } | null = null
+let reportsCache: { at: number; value: SeverePayload['reports'] } | null = null
+const OUTLOOK_TTL_MS = 10 * 60_000
+const REPORTS_TTL_MS = 4 * 60_000
 
 async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload> {
   // alerts are the headline data — their failure fails the fetch (triggering
@@ -250,24 +276,41 @@ async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload>
   // immediately — a fast alerts rejection during a slow SPC response must
   // reject this call, not become an unhandled rejection that kills the
   // process (review finding).
-  const [{ fc, counts }, outlook, torn, wind, hail] = await Promise.all([
+  const outlookFresh = outlookCache && Date.now() - outlookCache.at < OUTLOOK_TTL_MS
+  const reportsFresh = reportsCache && Date.now() - reportsCache.at < REPORTS_TTL_MS
+  const [{ fc, counts }, outlook, reports] = await Promise.all([
     fetchAlerts(),
-    fetchOutlook().catch((err) => {
-      console.error('[severe] outlook failed:', (err as Error).message)
-      return null
-    }),
-    fetchReports('torn').catch(() => [] as SevereReport[]),
-    fetchReports('wind').catch(() => [] as SevereReport[]),
-    fetchReports('hail').catch(() => [] as SevereReport[]),
+    outlookFresh
+      ? Promise.resolve(outlookCache!.value)
+      : fetchOutlook()
+          .then((v) => {
+            outlookCache = { at: Date.now(), value: v }
+            return v
+          })
+          .catch((err) => {
+            console.error('[severe] outlook failed:', (err as Error).message)
+            return outlookCache?.value ?? null
+          }),
+    reportsFresh
+      ? Promise.resolve(reportsCache!.value)
+      : Promise.all([
+          fetchReports('torn').catch(() => [] as SevereReport[]),
+          fetchReports('wind').catch(() => [] as SevereReport[]),
+          fetchReports('hail').catch(() => [] as SevereReport[]),
+        ]).then(([torn, wind, hail]) => {
+          const value = { torn, wind, hail }
+          reportsCache = { at: Date.now(), value }
+          return value
+        }),
   ])
-  counts.reports = torn.length + wind.length + hail.length
+  counts.reports = reports.torn.length + reports.wind.length + reports.hail.length
   return {
     source: 'nws-spc',
     mode,
     fetchedAt: new Date().toISOString(),
     alerts: fc,
     outlook,
-    reports: { torn, wind, hail },
+    reports,
     counts,
   }
 }
@@ -275,6 +318,9 @@ async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload>
 /** Live-mode entry point (Hono route). */
 export async function getSeverePayload(): Promise<SeverePayload> {
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.payload
+  if (lastGood && Date.now() - lastFailAt < FAIL_BACKOFF_MS) {
+    return { ...lastGood, stale: true }
+  }
   if (!inflight) {
     inflight = buildPayload('live')
       .then((payload) => {
@@ -289,6 +335,7 @@ export async function getSeverePayload(): Promise<SeverePayload> {
   try {
     return await inflight
   } catch (err) {
+    lastFailAt = Date.now()
     if (lastGood) return { ...lastGood, stale: true }
     throw err
   }

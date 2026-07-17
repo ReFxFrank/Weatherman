@@ -186,7 +186,7 @@ async function main() {
   // reused, or lightning. (A deploy with data beats no deploy: a skipped run
   // leaves whatever won the last race live, and stale-labeled data beats a
   // broken site.)
-  if (baked.length === 0 && !lightning) {
+  if (baked.length === 0 && !lightning && !severe) {
     console.error('nothing baked or reusable — refusing to deploy an empty feed')
     process.exit(1)
   }

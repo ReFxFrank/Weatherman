@@ -107,15 +107,63 @@ export default function App() {
     enabled: globe === 'severe',
   })
 
-  // The satellite-lag chips are wall-clock readouts — re-render them between
-  // refetches (which can be 10 min apart on Pages) so "live 1m" can't quietly
-  // mean "live 9m" (review finding).
-  const [, setLagTick] = useState(0)
+  // Wall-clock tick for the non-fire globes: lightning lag chips and the
+  // severe expiry filter must track real time between refetches (which can
+  // be 10 min apart on Pages; review findings).
+  const [uiTick, setUiTick] = useState(0)
   useEffect(() => {
-    if (globe !== 'lightning') return
-    const id = window.setInterval(() => setLagTick((t) => t + 1), 30_000)
+    if (globe === 'fire') return
+    const id = window.setInterval(() => setUiTick((t) => t + 1), 30_000)
     return () => clearInterval(id)
   }, [globe])
+
+  // Warnings expire in 30-45 minutes — a baked payload can easily outlive
+  // them. Filter expired alerts at render time and recount, so the globe
+  // never shows a lapsed tornado warning as "happening now" (review finding,
+  // safety-adjacent). renderKey re-keys the map sources when the filter
+  // changes between fetches.
+  const severeShown = useMemo(() => {
+    if (!severeData) return undefined
+    const nowIso = new Date().toISOString()
+    const kept = severeData.alerts.features.filter((f) => {
+      const exp = (f.properties as { expires?: string | null } | null)?.expires
+      return !exp || exp > nowIso
+    })
+    const counts = { ...severeData.counts }
+    if (kept.length !== severeData.alerts.features.length) {
+      counts.tornadoWarnings = 0
+      counts.severeWarnings = 0
+      counts.tornadoWatches = 0
+      counts.severeWatches = 0
+      for (const f of kept) {
+        const kind = (f.properties as { kind?: string } | null)?.kind
+        if (kind === 'tornado-warning') counts.tornadoWarnings++
+        else if (kind === 'severe-warning') counts.severeWarnings++
+        else if (kind === 'tornado-watch') counts.tornadoWatches++
+        else if (kind === 'severe-watch') counts.severeWatches++
+      }
+      // expiry-filtered counts can no longer see the server's unmapped
+      // breakdown per kind — carry it through unchanged (still honest: those
+      // alerts exist in the feed but aren't drawn)
+    }
+    return {
+      ...severeData,
+      alerts: { ...severeData.alerts, features: kept },
+      counts,
+      renderKey: `${severeData.fetchedAt}|${kept.length}`,
+    }
+    // uiTick advances the expiry clock between refetches
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [severeData, uiTick])
+
+  // The entrance flies once the ACTIVE globe's feed resolves — data or a
+  // definitive error; never park in orbit forever on a dead feed.
+  const entranceReady =
+    globe === 'severe'
+      ? Boolean(severeShown) || severeError
+      : globe === 'lightning'
+        ? Boolean(lightningDecoded) || lightningError
+        : Boolean(decoded) || isError
 
   // EONET named events — keyless + CORS-friendly, fetched straight from the
   // client (§3.2), refreshed on the same cadence.
@@ -279,7 +327,8 @@ export default function App() {
         data={data}
         full={decoded}
         lightning={globe === 'lightning' ? lightningData : undefined}
-        severe={globe === 'severe' ? severeData : undefined}
+        severe={globe === 'severe' ? severeShown : undefined}
+        entranceReady={entranceReady}
         events={events}
         quality={quality}
         selectedIndex={validSelection}
@@ -332,15 +381,17 @@ export default function App() {
           </div>
         )}
         {globe === 'severe' &&
-          severeData &&
+          severeShown &&
           !severeError &&
-          severeData.counts.tornadoWarnings +
-            severeData.counts.severeWarnings +
-            severeData.counts.tornadoWatches +
-            severeData.counts.severeWatches ===
+          severeShown.counts.tornadoWarnings +
+            severeShown.counts.severeWarnings +
+            severeShown.counts.tornadoWatches +
+            severeShown.counts.severeWatches ===
             0 && (
             <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
-              No active tornado or severe thunderstorm alerts — shading shows today's SPC risk outlook
+              {severeShown.outlook && severeShown.outlook.features.length > 0
+                ? "No active tornado or severe thunderstorm alerts — shading shows today's SPC risk outlook"
+                : 'No active tornado or severe thunderstorm alerts in the NWS feed'}
             </div>
           )}
         {globe === 'lightning' && lightningError && (
@@ -399,18 +450,23 @@ export default function App() {
                   FEED ERROR — {severeErr instanceof Error ? severeErr.message.slice(0, 60) : 'unknown'}
                 </span>
               )}
-              {severeData && !severeError && (
+              {severeShown && !severeError && (
                 <span>
-                  <span className={severeData.counts.tornadoWarnings > 0 ? 'text-red-400' : 'text-slate-300'}>
-                    {severeData.counts.tornadoWarnings} TOR
+                  <span className={severeShown.counts.tornadoWarnings > 0 ? 'text-red-400' : 'text-slate-300'}>
+                    {severeShown.counts.tornadoWarnings} TOR
                   </span>
                   {' · '}
-                  <span className={severeData.counts.severeWarnings > 0 ? 'text-amber-300' : 'text-slate-300'}>
-                    {severeData.counts.severeWarnings} SVR
+                  <span className={severeShown.counts.severeWarnings > 0 ? 'text-amber-300' : 'text-slate-300'}>
+                    {severeShown.counts.severeWarnings} SVR
                   </span>{' '}
-                  warnings · {severeData.counts.tornadoWatches + severeData.counts.severeWatches} watches ·{' '}
-                  {severeData.counts.reports} reports today
-                  {severeData.stale ? ' · STALE' : ''}
+                  warnings ·{' '}
+                  {/* "watch areas": one SPC watch arrives as several zone
+                      alerts — counting them as "watches" would inflate */}
+                  {severeShown.counts.tornadoWatches + severeShown.counts.severeWatches} watch areas ·{' '}
+                  {/* SPC report files cover the 12Z–12Z convective day */}
+                  {severeShown.counts.reports} reports since 12Z
+                  {severeShown.counts.unmapped > 0 ? ` · ${severeShown.counts.unmapped} unmapped` : ''}
+                  {severeShown.stale ? ' · STALE' : ''}
                 </span>
               )}
             </>
@@ -515,11 +571,11 @@ export default function App() {
             )}
           </div>
         )}
-        {globe === 'severe' && severeData && (
+        {globe === 'severe' && severeShown && (
           <div className="mt-1 font-mono text-[10px] text-slate-500">
             NWS warnings · SPC reports/outlook · US coverage ·{' '}
-            {severeData.mode === 'live' ? 'upd' : 'as of'}{' '}
-            {new Date(severeData.fetchedAt).toISOString().slice(11, 16)}Z
+            {severeShown.mode === 'live' ? 'upd' : 'as of'}{' '}
+            {new Date(severeShown.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
         <GlobeSwitcher className="mt-2" />
@@ -532,9 +588,11 @@ export default function App() {
                     ? ` of ${lightningData.meta.count.toLocaleString()}`
                     : ''
                 } ⚡`
-              : `${(data?.count ?? 0).toLocaleString()}${
-                  data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
-                }`}
+              : globe === 'severe'
+                ? `${severeShown?.alerts.features.length ?? 0} alert areas 🌪`
+                : `${(data?.count ?? 0).toLocaleString()}${
+                    data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                  }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}
