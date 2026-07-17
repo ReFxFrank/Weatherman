@@ -27,7 +27,7 @@ const GLOBES: Array<{
   },
   {
     id: 'severe',
-    label: 'SEVERE',
+    label: 'TORNADO',
     Icon: Tornado,
     onCls: 'border-red-400/40 bg-red-400/15 text-red-300',
   },
