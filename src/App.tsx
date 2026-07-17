@@ -544,8 +544,9 @@ export default function App() {
       <footer
         className={`absolute bottom-1 left-2 z-0 px-2 py-1 text-[9px] tracking-wide text-slate-600 ${glass}`}
       >
-        Active fire data: NASA FIRMS (MODIS/VIIRS) · Lightning: NOAA GOES GLM · Named events:
-        NASA EONET · Boundaries: Natural Earth · US perimeters: NIFC
+        Active fire data: NASA FIRMS (MODIS/VIIRS) · Lightning: NOAA GOES GLM + EUMETSAT MTG-LI ·
+        Severe weather: NOAA NWS/SPC · Named events: NASA EONET · Boundaries: Natural Earth ·
+        US perimeters: NIFC
       </footer>
     </div>
   )
