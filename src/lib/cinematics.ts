@@ -11,27 +11,13 @@ export const reducedMotion = () =>
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
 
-/** Where the camera should land: the longitude band burning hardest right now. */
-export function fireCenter(positions: Float32Array, frp: Float32Array): { lon: number; lat: number } {
-  const BINS = 24
-  const weight = new Float64Array(BINS)
-  const latSum = new Float64Array(BINS)
-  const n = frp.length
-  for (let i = 0; i < n; i++) {
-    const lon = positions[i * 2]
-    const lat = positions[i * 2 + 1]
-    const bin = Math.min(BINS - 1, Math.max(0, Math.floor(((lon + 180) / 360) * BINS)))
-    const w = Math.min(frp[i], 200) + 1
-    weight[bin] += w
-    latSum[bin] += lat * w
-  }
-  let best = 0
-  for (let b = 1; b < BINS; b++) if (weight[b] > weight[best]) best = b
-  const lon = -180 + (best + 0.5) * (360 / BINS)
-  const lat = weight[best] > 0 ? latSum[best] / weight[best] : 10
-  // Keep the globe pleasantly tilted rather than staring at a pole.
-  return { lon, lat: Math.min(35, Math.max(-30, lat)) }
-}
+/**
+ * Where the camera lands by default: a fixed home view framing North America
+ * (owner preference — this used to be the hardest-burning longitude band,
+ * which parked the camera over whatever continent led the fire count).
+ * Deep links (?lat/lon/z) still override the landing spot entirely.
+ */
+export const HOME_VIEW = { lon: -98, lat: 36 }
 
 export const ENTRANCE_START = { longitude: -40, latitude: 8, zoom: 0.45 }
 export const ENTRANCE_MS = 5200

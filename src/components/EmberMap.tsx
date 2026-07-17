@@ -15,7 +15,7 @@ import { findNearestHotspot } from '../lib/nearestHotspot'
 import { mapBus } from '../lib/mapBus'
 import {
   ENTRANCE_START,
-  fireCenter,
+  HOME_VIEW,
   flyEntrance,
   reducedMotion,
   startIdleRotation,
@@ -195,7 +195,7 @@ export function EmberMap({
   }
 
   // Entrance: once the globe is up and data has arrived, ease down from orbit
-  // onto the hardest-burning longitude while the fires ignite (§5.7).
+  // onto the North America home view while the fires ignite (§5.7).
   useEffect(() => {
     if (!mapLoaded || !full || entranceStarted.current) return
     const map = mapRef.current?.getMap()
@@ -204,8 +204,7 @@ export function EmberMap({
 
     if (jump) return // dev override: already in place, fully ignited
 
-    // fireCenter expects the decoded 2-stride positions (derived is 3-stride)
-    const target = fireCenter(full.positions, full.frp)
+    const target = HOME_VIEW
     if (reducedMotion()) {
       map.jumpTo({ center: [target.lon, target.lat], zoom: 1.95 })
       setIgnite(1)
