@@ -245,9 +245,13 @@ let inflight: Promise<SeverePayload> | null = null
 
 async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload> {
   // alerts are the headline data — their failure fails the fetch (triggering
-  // stale fallback); outlook/reports degrade to empty per-source
-  const alertsP = fetchAlerts()
-  const [outlook, torn, wind, hail] = await Promise.all([
+  // stale fallback); outlook/reports degrade to empty per-source. All five
+  // fetches share ONE Promise.all so every promise has its handler attached
+  // immediately — a fast alerts rejection during a slow SPC response must
+  // reject this call, not become an unhandled rejection that kills the
+  // process (review finding).
+  const [{ fc, counts }, outlook, torn, wind, hail] = await Promise.all([
+    fetchAlerts(),
     fetchOutlook().catch((err) => {
       console.error('[severe] outlook failed:', (err as Error).message)
       return null
@@ -256,7 +260,6 @@ async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload>
     fetchReports('wind').catch(() => [] as SevereReport[]),
     fetchReports('hail').catch(() => [] as SevereReport[]),
   ])
-  const { fc, counts } = await alertsP
   counts.reports = torn.length + wind.length + hail.length
   return {
     source: 'nws-spc',
