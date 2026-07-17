@@ -1,0 +1,16 @@
+# This file INTENTIONALLY fails GitHub's legacy branch-based Pages build
+# ("pages build and deployment" — the Jekyll one). This repo's Pages site is
+# currently configured with Source: "Deploy from a branch", which makes that
+# legacy build race the real deploy workflow (.github/workflows/pages.yml) on
+# every push — and when the legacy build wins the race, it publishes the RAW
+# SOURCE TREE and the site is a white page (index.html points at
+# /src/main.tsx, which only exists in dev).
+#
+# A failed legacy build deploys nothing, so the workflow's built site stays
+# live. The permanent fix is one click by a repo admin:
+#   Settings → Pages → Build and deployment → Source: "GitHub Actions"
+# After that, the legacy build never runs again, this file is inert, and any
+# "Pages build failure" warnings stop.
+#
+# The line below is deliberately invalid YAML:
+plugins: [ { unclosed
