@@ -290,6 +290,7 @@ export default function App() {
       ) : (
         <Legend
           globe={globe}
+          hasMtg={Boolean(lightningDecoded?.meta.sats.some((s) => s.id.startsWith('MTI')))}
           className={`absolute bottom-8 right-4 z-0 hidden w-60 lg:block ${glass}`}
         />
       )}
@@ -406,7 +407,10 @@ export default function App() {
         {globe === 'lightning' && lightningDecoded && (
           <div className="mt-1 font-mono text-[10px] text-slate-500">
             {lightningDecoded.meta.sats.map((s, i) => {
-              const label = s.name.replace('GOES-', '')
+              const label = s.id.startsWith('MTI') ? 'MTG' : s.name.replace('GOES-', '')
+              // "behind" is cadence-relative: GLM lands every 20 s, Meteosat
+              // products every 10 min — a 12-minute-old MTG product is normal
+              const behindMin = (s.cadenceSec / 60) * 2 + 10
               if (!s.lastGranuleSec)
                 return (
                   <span key={s.id}>
@@ -427,8 +431,8 @@ export default function App() {
                 <span key={s.id}>
                   {i > 0 && ' · '}
                   {label}{' '}
-                  <span className={lagMin > 15 ? 'text-amber-400/90' : 'text-sky-400/90'}>
-                    {lagMin > 15 ? `${Math.round(lagMin)}m behind` : `live ${lagMin < 1 ? '<1' : Math.round(lagMin)}m`}
+                  <span className={lagMin > behindMin ? 'text-amber-400/90' : 'text-sky-400/90'}>
+                    {lagMin > behindMin ? `${Math.round(lagMin)}m behind` : `live ${lagMin < 1 ? '<1' : Math.round(lagMin)}m`}
                   </span>
                   {s.failedKeys > 8 && <span className="text-amber-400/80"> ({s.failedKeys} gaps)</span>}
                 </span>

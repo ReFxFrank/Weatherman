@@ -99,6 +99,10 @@ jobs:
       - name: Bake live FIRMS data
         env:
           FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          # Meteosat MTG-LI lightning (Europe/Africa) — free EUMETSAT account;
+          # absent secrets simply omit that satellite from the payload.
+          EUMETSAT_CONSUMER_KEY: ${{ secrets.EUMETSAT_CONSUMER_KEY }}
+          EUMETSAT_CONSUMER_SECRET: ${{ secrets.EUMETSAT_CONSUMER_SECRET }}
           OUT_DIR: dist/data
           # Per-file fallback: when an upstream fetch fails (FIRMS was
           # unreachable from Actions runners for ~1h tonight), reuse the

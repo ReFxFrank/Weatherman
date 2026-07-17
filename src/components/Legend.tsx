@@ -22,7 +22,7 @@ const LIGHTNING_GRADIENT = `linear-gradient(90deg, ${[0, 0.25, 0.5, 0.75, 1]
   })
   .join(', ')})`
 
-function LightningLegend() {
+function LightningLegend({ hasMtg = false }: { hasMtg?: boolean }) {
   return (
     <>
       <div className="h-2 rounded-sm" style={{ background: LIGHTNING_GRADIENT }} />
@@ -55,22 +55,31 @@ function LightningLegend() {
           <span className="text-[10px] text-slate-400">≈ GOES satellite field of view</span>
         </div>
         <p className="text-[9px] leading-snug text-slate-600">
-          GOES GLM sees the Americas &amp; adjacent oceans — outside the rings means no
-          coverage, not no lightning; a red ring means that satellite is currently dark.
-          Where the two rings overlap, both satellites see the same storm, so detections
-          there can count a flash twice. Strikes fade over 60 min.
+          {hasMtg
+            ? 'GOES (Americas) + Meteosat (Europe/Africa) — outside the rings means no coverage, not no lightning; a red ring means that satellite is currently dark. '
+            : 'GOES GLM sees the Americas & adjacent oceans — outside the rings means no coverage, not no lightning; a red ring means that satellite is currently dark. '}
+          Where rings overlap, both satellites see the same storm, so detections there can
+          count a flash twice. Strikes fade over 60 min.
         </p>
       </div>
     </>
   )
 }
 
-export function Legend({ className = 'w-60', globe = 'fire' }: { className?: string; globe?: GlobeId }) {
+export function Legend({
+  className = 'w-60',
+  globe = 'fire',
+  hasMtg = false,
+}: {
+  className?: string
+  globe?: GlobeId
+  hasMtg?: boolean
+}) {
   if (globe === 'lightning') {
     return (
       <div className={`${className} px-4 py-3`}>
         <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
-        <LightningLegend />
+        <LightningLegend hasMtg={hasMtg} />
       </div>
     )
   }

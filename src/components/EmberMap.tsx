@@ -160,11 +160,14 @@ export function EmberMap({
     [full, selectedIndex],
   )
 
-  // A dark satellite's coverage ring restyles red — "covered but blind".
-  const satsDark = useMemo(
+  // Coverage rings come from the payload's satellite list (GOES always;
+  // Meteosat when configured). A dark satellite's ring restyles red.
+  const coverageSats = useMemo(
     () =>
-      lightning?.meta.sats.map((s) => s.everListed && s.pendingKeys === 0 && !s.lastGranuleSec) ??
-      [],
+      lightning?.meta.sats.map((s) => ({
+        lonSubSat: s.lonSubSat,
+        dark: s.everListed && s.pendingKeys === 0 && !s.lastGranuleSec,
+      })) ?? [],
     [lightning],
   )
 
@@ -188,7 +191,7 @@ export function EmberMap({
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
-    satsDark,
+    coverageSats,
   })
   styleStateRef.current = {
     projection,
@@ -202,7 +205,7 @@ export function EmberMap({
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
     showPerimeters: showPerimeters && fireGlobe,
-    satsDark,
+    coverageSats,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -216,7 +219,7 @@ export function EmberMap({
     syncGlmCoverage(map, {
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'lightning',
-      dark: s.satsDark,
+      sats: s.coverageSats,
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -324,7 +327,7 @@ export function EmberMap({
     showChoropleth,
     perimeters,
     showPerimeters,
-    satsDark,
+    coverageSats,
   ])
 
   // The terminator moves with the sun — refresh its geometry every minute.

@@ -1,65 +1,77 @@
 /**
- * GOES GLM (Geostationary Lightning Mapper) ingest — the lightning globe's
- * data plane. NOAA publishes one L2 "LCFA" granule per satellite every
- * 20 seconds to public S3 buckets (keyless, public domain, ~230 KB NetCDF-4);
- * granules land ~10–30 s after observation. This module lists the buckets,
- * decodes granules with h5wasm (NetCDF-4 is HDF5 — Node's netcdfjs can't read
- * it), and maintains a rolling window of flashes per satellite, encoded into
- * the same binary wire conventions as the FIRMS payloads (see server/firms.ts).
+ * Lightning ingest — the lightning globe's data plane, merging multiple
+ * geostationary lightning sensors into one rolling window:
  *
- * Coverage honesty (docs/DECISIONS.md): GOES-West (137.2°W) + GOES-East
- * (75.2°W) see the Americas and adjacent oceans — NOT the whole planet, and
- * either instrument can go dark (a multi-hour GOES-East outage was observed
- * while building this). Per-satellite freshness ships in the payload header
- * so the UI can say so instead of silently going dark. EUMETSAT's MTG Lightning
- * Imager (Europe/Africa) can extend coverage later behind EUMETSAT_KEY.
+ * - GOES-West / GOES-East GLM: one L2 "LCFA" granule per satellite every
+ *   20 seconds on NOAA's public S3 buckets (keyless, public domain,
+ *   ~230 KB NetCDF-4), landing ~10–30 s after observation.
+ * - Meteosat MTG-I1 Lightning Imager (server/mtgli.ts): one L2 "LFL"
+ *   product every 10 minutes from EUMETSAT's Data Store — free but keyed
+ *   (EUMETSAT_CONSUMER_KEY/SECRET), enabled only when credentials exist.
  *
- * Flash timestamps are quantized to the 20-second granule start (parsed from
- * the object key) — per-flash sub-second offsets exist in the file but are
- * irrelevant at the one-hour window this globe renders.
+ * NetCDF-4 is HDF5 — decoded with h5wasm (Node's netcdfjs can't read it).
+ * Payloads use the same binary wire conventions as FIRMS (server/firms.ts).
+ *
+ * Coverage honesty (docs/DECISIONS.md): these sensors see the Americas plus
+ * Europe/Africa — NOT the whole planet — and any instrument can go dark
+ * (a multi-hour GOES-East outage was live while this shipped). Per-satellite
+ * freshness, cadence, and sub-satellite longitude ship in the payload header
+ * so the UI renders exactly what is and isn't covered.
+ *
+ * GLM flash timestamps quantize to the 20-second granule start; MTG-LI
+ * products span 10 minutes, so those carry per-flash timestamps.
  */
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import h5wasm from 'h5wasm/node'
+import { createMtgSources } from './mtgli'
 
 export const LIGHTNING_WINDOW_MIN = 60
-/** keep a little slack beyond the window so eviction never races the filter */
-const EVICT_MIN = LIGHTNING_WINDOW_MIN + 5
-/** granules fetched per satellite per ingest cycle (newest first) */
+/** slack beyond the window: must exceed the longest product span (MTG: 10 min)
+ *  so eviction-by-start-time never drops flashes still inside the window */
+const EVICT_MIN = LIGHTNING_WINDOW_MIN + 15
+/** granules fetched per source per ingest cycle (newest first) */
 const FETCH_BATCH = 40
 const FETCH_CONCURRENCY = 8
-/** stop polling S3 when nobody has asked for lightning in a while */
+/** stop polling upstreams when nobody has asked for lightning in a while */
 const IDLE_STOP_MS = 10 * 60_000
 const CYCLE_ACTIVE_MS = 20_000
 const CYCLE_BACKFILL_MS = 2_000
 
-export interface GlmSatellite {
-  id: string
-  name: string
-  bucket: string
-  /** sub-satellite longitude, °E — the center of its field of view */
-  lonSubSat: number
+/** One decoded granule/product's worth of flashes. */
+export interface FlashBatch {
+  lon: Float32Array
+  lat: Float32Array
+  /** sensor-native optical intensity, normalized per source (see DECISIONS) */
+  energy: Float32Array
+  /** per-flash epoch seconds; omit to quantize every flash to the key's time */
+  tsSec?: Uint32Array
 }
 
-export const GLM_SATELLITES: GlmSatellite[] = [
-  { id: 'G18', name: 'GOES-West', bucket: 'noaa-goes18', lonSubSat: -137.2 },
-  { id: 'G19', name: 'GOES-East', bucket: 'noaa-goes19', lonSubSat: -75.2 },
-]
-
-export interface LightningColumns {
-  /** [lon, lat] interleaved */
-  positions: Float32Array
-  /** flash optical energy, femtojoules (raw joules × 1e15) */
-  energy: Float32Array
-  /** granule start, epoch seconds UTC (20 s quantization) */
-  tsSec: Uint32Array
-  /** index into GLM_SATELLITES */
-  sat: Uint8Array
+/** A pluggable lightning sensor. */
+export interface LightningSource {
+  id: string
+  name: string
+  /** sub-satellite longitude, °E — center of its field of view */
+  lonSubSat: number
+  /** nominal product cadence, seconds (drives UI freshness expectations) */
+  cadenceSec: number
+  /** false when required credentials are missing — source omitted entirely */
+  enabled(): boolean
+  /** minimum seconds between upstream listings (be polite to keyed APIs) */
+  listIntervalSec: number
+  /** keys (granules/products) available for the window; must be sortable
+   *  newest-last and carry their start time via keyEpochSec */
+  list(nowSec: number, windowMin: number): Promise<string[]>
+  keyEpochSec(key: string): number
+  fetch(key: string): Promise<FlashBatch>
 }
 
 export interface SatMeta {
   id: string
   name: string
+  lonSubSat: number
+  cadenceSec: number
   /** epoch seconds of the newest decoded granule, 0 if none */
   lastGranuleSec: number
   flashCount: number
@@ -84,6 +96,13 @@ export interface LightningMeta {
   stale?: boolean
 }
 
+export interface LightningColumns {
+  positions: Float32Array
+  energy: Float32Array
+  tsSec: Uint32Array
+  sat: Uint8Array
+}
+
 export interface LightningSection {
   name: keyof LightningColumns
   type: 'f32' | 'u32' | 'u8'
@@ -96,25 +115,21 @@ export type LightningHeader = LightningMeta & { dataOffset: number; sections: Li
 interface Granule {
   key: string
   tsSec: number
-  lon: Float32Array
-  lat: Float32Array
-  energy: Float32Array
+  batch: FlashBatch
 }
 
-interface SatState {
-  def: GlmSatellite
+interface SourceState {
+  def: LightningSource
   granules: Map<string, Granule>
   /** keys we've listed; pending/retry are fetchable, failed is given up */
   known: Map<string, 'pending' | 'retry' | 'done' | 'failed'>
   everListed: boolean
+  lastListAt: number
 }
 
-const state: SatState[] = GLM_SATELLITES.map((def) => ({
-  def,
-  granules: new Map(),
-  known: new Map(),
-  everListed: false,
-}))
+// ---------------------------------------------------------------------------
+// GOES GLM sources (keyless public S3)
+// ---------------------------------------------------------------------------
 
 /** `_s20261980102200_` in an object key → epoch seconds (year, DOY, HHMMSS). */
 export function granuleEpochSec(key: string): number {
@@ -127,7 +142,7 @@ export function granuleEpochSec(key: string): number {
   )
 }
 
-/** hour prefixes (YYYY/DDD/HH) covering [now - windowMin, now] */
+/** hour prefixes (YYYY/DDD/HH) covering [now - windowMin - slack, now] */
 function hourPrefixes(nowSec: number, windowMin: number): string[] {
   const out: string[] = []
   for (let t = nowSec - windowMin * 60 - 3600; t <= nowSec; t += 3600) {
@@ -140,7 +155,7 @@ function hourPrefixes(nowSec: number, windowMin: number): string[] {
   return [...new Set(out)].slice(-3) // window ≤ 60 min spans at most 3 hour-dirs
 }
 
-async function listKeys(bucket: string, prefix: string): Promise<string[]> {
+async function listS3Keys(bucket: string, prefix: string): Promise<string[]> {
   const url = `https://${bucket}.s3.amazonaws.com/?list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=1000`
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
   if (!res.ok) throw new Error(`S3 list ${bucket} ${res.status}`)
@@ -158,33 +173,52 @@ const attrNum = (v: unknown): number => {
 
 let decodeSeq = 0
 
-/** Download one granule and extract quality-0 flashes. */
-async function fetchGranule(bucket: string, key: string): Promise<Granule> {
+/**
+ * Decode an HDF5/NetCDF-4 buffer via h5wasm and hand the open file to `read`.
+ * h5wasm/node is NODERAWFS — these are REAL files, so they live in the OS
+ * temp dir (not the cwd) with pid-unique names: the proxy and the bake script
+ * can run concurrently from the same directory (review finding).
+ */
+export async function withH5<T>(buf: ArrayBuffer, read: (f: InstanceType<typeof h5wasm.File>) => T): Promise<T> {
+  const Module = await h5wasm.ready
+  const { FS } = Module
+  const tmp = join(tmpdir(), `ember-li-${process.pid}-${decodeSeq++}.nc`)
+  FS.writeFile(tmp, new Uint8Array(buf))
+  let f: InstanceType<typeof h5wasm.File> | undefined
+  try {
+    f = new h5wasm.File(tmp, 'r')
+    return read(f)
+  } finally {
+    f?.close()
+    try {
+      FS.unlink(tmp)
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+export function h5Dataset(
+  f: InstanceType<typeof h5wasm.File>,
+  name: string,
+): { value: unknown; attrs: Record<string, { value: unknown }> } {
+  const d = f.get(name)
+  if (!d || !('value' in d)) throw new Error(`granule missing dataset ${name}`)
+  return d as { value: unknown; attrs: Record<string, { value: unknown }> }
+}
+
+async function fetchGlmGranule(bucket: string, key: string): Promise<FlashBatch> {
   const res = await fetch(`https://${bucket}.s3.amazonaws.com/${key}`, {
     signal: AbortSignal.timeout(60_000),
   })
   if (!res.ok) throw new Error(`S3 get ${res.status}`)
   const buf = await res.arrayBuffer()
 
-  const Module = await h5wasm.ready
-  const { FS } = Module
-  // h5wasm/node is NODERAWFS — these are REAL files, so they must live in the
-  // OS temp dir (not the cwd) and carry the pid: the proxy and the bake script
-  // can run concurrently from the same directory (review finding).
-  const tmp = join(tmpdir(), `ember-glm-${process.pid}-${decodeSeq++}.nc`)
-  FS.writeFile(tmp, new Uint8Array(buf))
-  let f: InstanceType<typeof h5wasm.File> | undefined
-  try {
-    f = new h5wasm.File(tmp, 'r')
-    const ds = (name: string) => {
-      const d = f!.get(name)
-      if (!d || !('value' in d)) throw new Error(`granule missing dataset ${name}`)
-      return d as { value: unknown; attrs: Record<string, { value: unknown }> }
-    }
-    const lat = ds('flash_lat').value as Float32Array
-    const lon = ds('flash_lon').value as Float32Array
-    const q = ds('flash_quality_flag').value as Int16Array
-    const eRaw = ds('flash_energy')
+  return withH5(buf, (f) => {
+    const lat = h5Dataset(f, 'flash_lat').value as Float32Array
+    const lon = h5Dataset(f, 'flash_lon').value as Float32Array
+    const q = h5Dataset(f, 'flash_quality_flag').value as Int16Array
+    const eRaw = h5Dataset(f, 'flash_energy')
     const eVal = eRaw.value as Int16Array
     // energy is a scaled int16 in joules, declared `_Unsigned: true` — h5wasm
     // reads it signed, so the strongest flashes wrap negative unless converted
@@ -213,21 +247,50 @@ async function fetchGranule(bucket: string, key: string): Promise<Granule> {
       m++
     }
     return {
-      key,
-      tsSec: granuleEpochSec(key),
       lon: outLon.subarray(0, m),
       lat: outLat.subarray(0, m),
       energy: outEnergy.subarray(0, m),
     }
-  } finally {
-    f?.close()
-    try {
-      FS.unlink(tmp)
-    } catch {
-      /* already gone */
-    }
+  })
+}
+
+function glmSource(id: string, name: string, bucket: string, lonSubSat: number): LightningSource {
+  return {
+    id,
+    name,
+    lonSubSat,
+    cadenceSec: 20,
+    enabled: () => true,
+    listIntervalSec: 0,
+    list: async (nowSec, windowMin) => {
+      const prefixes = hourPrefixes(nowSec, windowMin)
+      const lists = await Promise.all(prefixes.map((p) => listS3Keys(bucket, p)))
+      return lists.flat()
+    },
+    keyEpochSec: granuleEpochSec,
+    fetch: (key) => fetchGlmGranule(bucket, key),
   }
 }
+
+// ---------------------------------------------------------------------------
+// Ingest core (source-agnostic)
+// ---------------------------------------------------------------------------
+
+const SOURCES: LightningSource[] = [
+  glmSource('G18', 'GOES-West', 'noaa-goes18', -137.2),
+  glmSource('G19', 'GOES-East', 'noaa-goes19', -75.2),
+  ...createMtgSources(),
+]
+
+const state: SourceState[] = SOURCES.map((def) => ({
+  def,
+  granules: new Map(),
+  known: new Map(),
+  everListed: false,
+  lastListAt: 0,
+}))
+
+const activeStates = () => state.filter((s) => s.def.enabled())
 
 async function pool<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
   let i = 0
@@ -243,25 +306,27 @@ async function pool<T>(items: T[], limit: number, run: (item: T) => Promise<void
 /**
  * One ingest cycle: refresh listings, fetch a batch of missing granules
  * (newest first, so "now" fills before history), evict outside the window.
- * Returns how many granules are still pending across satellites.
+ * Returns how many granules are still pending across sources.
  */
 export async function ingestCycle(batch = FETCH_BATCH): Promise<number> {
   const nowSec = Math.floor(Date.now() / 1000)
   let pendingTotal = 0
 
-  for (const s of state) {
-    // 1. list — tolerate a satellite being unreachable, others keep going
-    try {
-      const prefixes = hourPrefixes(nowSec, LIGHTNING_WINDOW_MIN)
-      const lists = await Promise.all(prefixes.map((p) => listKeys(s.def.bucket, p)))
-      s.everListed = true
-      for (const key of lists.flat()) {
-        if (!s.known.has(key) && granuleEpochSec(key) >= nowSec - EVICT_MIN * 60) {
-          s.known.set(key, 'pending')
+  for (const s of activeStates()) {
+    // 1. list — tolerate a source being unreachable, others keep going
+    if (nowSec - s.lastListAt >= s.def.listIntervalSec) {
+      try {
+        const keys = await s.def.list(nowSec, LIGHTNING_WINDOW_MIN)
+        s.everListed = true
+        s.lastListAt = nowSec
+        for (const key of keys) {
+          if (!s.known.has(key) && s.def.keyEpochSec(key) >= nowSec - EVICT_MIN * 60) {
+            s.known.set(key, 'pending')
+          }
         }
+      } catch (err) {
+        console.error(`[lightning] list ${s.def.id} failed:`, (err as Error).message)
       }
-    } catch (err) {
-      console.error(`[glm] list ${s.def.id} failed:`, (err as Error).message)
     }
 
     // 2. fetch a newest-first batch of pending keys
@@ -273,21 +338,21 @@ export async function ingestCycle(batch = FETCH_BATCH): Promise<number> {
     const take = pending.slice(0, batch)
     await pool(take, FETCH_CONCURRENCY, async (key) => {
       try {
-        const g = await fetchGranule(s.def.bucket, key)
-        s.granules.set(key, g)
+        const batchData = await s.def.fetch(key)
+        s.granules.set(key, { key, tsSec: s.def.keyEpochSec(key), batch: batchData })
         s.known.set(key, 'done')
       } catch (err) {
         // one retry on a later cycle, then give up so backfill can reach 1
         const st = s.known.get(key)
         s.known.set(key, st === 'pending' ? 'retry' : 'failed')
-        console.error(`[glm] granule ${key.slice(-40)} failed:`, (err as Error).message)
+        console.error(`[lightning] ${s.def.id} ${key.slice(-48)} failed:`, (err as Error).message)
       }
     })
 
     // 3. evict granules (and listing memory) older than the window + slack
     const cutoff = nowSec - EVICT_MIN * 60
     for (const [key, g] of s.granules) if (g.tsSec < cutoff) s.granules.delete(key)
-    for (const key of s.known.keys()) if (granuleEpochSec(key) < cutoff) s.known.delete(key)
+    for (const key of s.known.keys()) if (s.def.keyEpochSec(key) < cutoff) s.known.delete(key)
 
     pendingTotal += [...s.known.values()].filter((st) => st === 'pending' || st === 'retry').length
   }
@@ -305,18 +370,18 @@ function ensureIngestLoop() {
   if (loopRunning) return
   loopRunning = true
   ;(async () => {
-    console.log('[glm] ingest loop started')
+    console.log('[lightning] ingest loop started')
     while (Date.now() - lastRequestAt < IDLE_STOP_MS) {
       let backlog = 0
       try {
         backlog = await ingestCycle()
       } catch (err) {
-        console.error('[glm] ingest cycle failed:', (err as Error).message)
+        console.error('[lightning] ingest cycle failed:', (err as Error).message)
       }
       await new Promise((r) => setTimeout(r, backlog > 0 ? CYCLE_BACKFILL_MS : CYCLE_ACTIVE_MS))
     }
     loopRunning = false
-    console.log('[glm] ingest loop idle-stopped')
+    console.log('[lightning] ingest loop idle-stopped')
   })()
 }
 
@@ -362,10 +427,20 @@ export function encodeLightning(meta: LightningMeta, columns: LightningColumns):
 function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: Uint8Array } {
   const nowSec = Math.floor(Date.now() / 1000)
   const cutoff = nowSec - LIGHTNING_WINDOW_MIN * 60
+  const states = activeStates()
 
+  // Per-flash time filtering: a product whose START is outside the window can
+  // still hold in-window flashes (MTG products span 10 minutes).
   let total = 0
-  for (const s of state)
-    for (const g of s.granules.values()) if (g.tsSec >= cutoff) total += g.lon.length
+  for (const s of states)
+    for (const g of s.granules.values()) {
+      const ts = g.batch.tsSec
+      if (ts) {
+        for (let i = 0; i < ts.length; i++) if (ts[i] >= cutoff) total++
+      } else if (g.tsSec >= cutoff) {
+        total += g.batch.lon.length
+      }
+    }
 
   const positions = new Float32Array(total * 2)
   const energy = new Float32Array(total)
@@ -376,27 +451,30 @@ function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: 
   let listedInWindow = 0
   let doneInWindow = 0
   let m = 0
-  for (let si = 0; si < state.length; si++) {
-    const s = state[si]
+  for (let si = 0; si < states.length; si++) {
+    const s = states[si]
     let flashCount = 0
     let lastGranuleSec = 0
     for (const g of s.granules.values()) {
-      if (g.tsSec < cutoff) continue
+      const perFlash = g.batch.tsSec
+      if (!perFlash && g.tsSec < cutoff) continue
       lastGranuleSec = Math.max(lastGranuleSec, g.tsSec)
-      for (let i = 0; i < g.lon.length; i++) {
-        positions[m * 2] = g.lon[i]
-        positions[m * 2 + 1] = g.lat[i]
-        energy[m] = g.energy[i]
-        tsSec[m] = g.tsSec
+      for (let i = 0; i < g.batch.lon.length; i++) {
+        const ts = perFlash ? perFlash[i] : g.tsSec
+        if (ts < cutoff) continue
+        positions[m * 2] = g.batch.lon[i]
+        positions[m * 2 + 1] = g.batch.lat[i]
+        energy[m] = g.batch.energy[i]
+        tsSec[m] = ts
         sat[m] = si
         m++
+        flashCount++
       }
-      flashCount += g.lon.length
     }
     let pendingKeys = 0
     let failedKeys = 0
     for (const [key, st] of s.known) {
-      if (granuleEpochSec(key) < cutoff) continue
+      if (s.def.keyEpochSec(key) < cutoff) continue
       listedInWindow++
       if (st === 'pending' || st === 'retry') pendingKeys++
       else {
@@ -407,6 +485,8 @@ function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: 
     sats.push({
       id: s.def.id,
       name: s.def.name,
+      lonSubSat: s.def.lonSubSat,
+      cadenceSec: s.def.cadenceSec,
       lastGranuleSec,
       flashCount,
       pendingKeys,
@@ -427,7 +507,15 @@ function buildPayload(mode: LightningMeta['mode']): { meta: LightningMeta; bin: 
     // for that failure mode (review finding).
     backfill: listedInWindow > 0 ? doneInWindow / listedInWindow : 1,
   }
-  return { meta, bin: encodeLightning(meta, { positions, energy, tsSec, sat }) }
+  return {
+    meta,
+    bin: encodeLightning(meta, {
+      positions: positions.subarray(0, m * 2),
+      energy: energy.subarray(0, m),
+      tsSec: tsSec.subarray(0, m),
+      sat: sat.subarray(0, m),
+    }),
+  }
 }
 
 let payloadCache: { at: number; meta: LightningMeta; bin: Uint8Array } | null = null

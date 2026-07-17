@@ -296,12 +296,24 @@ for debugging.
   age ranges slide with the wall clock between refetches (uniform updates via
   the existing ~30 fps pulse ticker, zero rebuilds). Splats reuse the 25 km
   anti-z-fighting lift.
-- **EUMETSAT MTG-LI deferred** (Europe/Africa extension): requires a free
-  registered key — the owner's manual step — and slots in as a third
-  "satellite" in server/glm.ts behind an `EUMETSAT_KEY` secret, same pattern
-  as `FIRMS_MAP_KEY`. Asia/W-Pacific has no legally usable free feed
-  (Blitzortung's rules restrict redistribution; commercial networks only) —
-  documented as a permanent gap, shown honestly by the coverage rings.
+- **EUMETSAT MTG-LI shipped** (Europe/Africa extension): the owner registered
+  a free EUMETSAT account; `EUMETSAT_CONSUMER_KEY`/`EUMETSAT_CONSUMER_SECRET`
+  live in Actions secrets (Pages) / `.env` (VPS), same pattern as
+  `FIRMS_MAP_KEY`. server/mtgli.ts plugs Meteosat MTG-I1 in as a third
+  lightning source: keyless browse API lists 10-minute LFL products
+  (published ~30-60 s after window close), OAuth2 client-credentials token
+  (cached ~1 h), zip download (BODY NetCDF preferred by name), h5wasm decode
+  with per-flash timestamps. Without the secrets the source reports
+  enabled()=false and is omitted from payloads entirely — no fake DARK
+  satellite. LI reports flash *radiance* (mW·m⁻²·sr⁻¹), not GLM's optical
+  energy (J): the wire `energy` column is sensor-native intensity on a
+  per-satellite relative scale (LI_INTENSITY_SCALE), used only for color/size
+  — no UI shows the number with units. Coverage rings and HUD freshness
+  chips are satellite-generic (per-sat lonSubSat + cadence in the header;
+  "behind" thresholds are cadence-relative: a 12-min-old MTG product is
+  normal, a 12-min-old GLM granule is not). Asia/W-Pacific still has no
+  legally usable free feed (Blitzortung's rules restrict redistribution;
+  commercial networks only) — a permanent gap, shown honestly by the rings.
 - **Lightning filters/stats/timeline deferred**: the lightning globe ships
   with HUD + legend only; per-globe filter panels and a minutes-scale
   timeline are a later phase once the framework proves out.

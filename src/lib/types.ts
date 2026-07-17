@@ -59,6 +59,10 @@ export type DecodedFire = Omit<FireData, 'colors' | 'radii' | 'filterValues'>
 export interface LightningSatMeta {
   id: string
   name: string
+  /** sub-satellite longitude, °E — center of its field of view */
+  lonSubSat: number
+  /** nominal product cadence, seconds (20 for GLM, 600 for MTG-LI) */
+  cadenceSec: number
   /** epoch seconds of the newest decoded granule, 0 if the satellite is dark */
   lastGranuleSec: number
   flashCount: number
