@@ -260,6 +260,56 @@ export type HurricaneSelection =
   | { type: 'global'; title: string }
   | { type: 'forecast'; props: ForecastPointProps }
 
+// ---------------------------------------------------------------------------
+// Earthquakes (USGS) — fetched straight from the client (keyless, CORS-open,
+// public domain), no proxy/bake. Small JSON, native MapLibre layers.
+// ---------------------------------------------------------------------------
+
+export interface Quake {
+  /** USGS event id (stable) */
+  id: string
+  /** magnitude (USGS reports a mix of scales; treated uniformly for scale) */
+  mag: number
+  /** USGS place description, e.g. "79 km SW of Puerto Madero, Mexico" */
+  place: string
+  /** origin time, epoch ms UTC */
+  time: number
+  lon: number
+  lat: number
+  /** hypocenter depth, km (null when USGS omits it) */
+  depthKm: number | null
+  /** USGS-flagged tsunami potential for oceanic events */
+  tsunami: boolean
+  /** DYFI "felt" report count, null when nobody has reported */
+  felt: number | null
+  /** event type — usually "earthquake", sometimes "quarry blast"/"explosion" */
+  type: string
+  /** USGS event page */
+  url: string
+}
+
+export interface QuakeCounts {
+  total: number
+  /** events at or above M4.5 (roughly the globally-complete threshold) */
+  significant: number
+  strongestMag: number
+  strongestPlace: string | null
+}
+
+export interface QuakePayload {
+  source: 'usgs'
+  /** hours of history the feed covers (24 for all_day) */
+  windowHours: number
+  /** USGS feed generation time (metadata.generated), ISO */
+  fetchedAt: string
+  quakes: Quake[]
+  counts: QuakeCounts
+}
+
+/** A clicked earthquake: a stable USGS id resolved against the current
+ *  payload at render time (an event aging out of the window closes its card). */
+export type QuakeSelection = { id: string }
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

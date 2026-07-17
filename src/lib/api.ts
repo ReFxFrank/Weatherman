@@ -1,6 +1,14 @@
 import { decodeFireBinary } from './binary'
 import { decodeLightningBinary } from './lightningBinary'
-import type { DecodedFire, DecodedLightning, EonetEvent, HurricanePayload, SeverePayload } from './types'
+import type {
+  DecodedFire,
+  DecodedLightning,
+  EonetEvent,
+  HurricanePayload,
+  Quake,
+  QuakePayload,
+  SeverePayload,
+} from './types'
 
 export const DEFAULT_SOURCE = 'VIIRS_NOAA20_NRT'
 
@@ -124,6 +132,92 @@ export async function fetchHurricanes(): Promise<HurricanePayload> {
     throw new Error(detail || `hurricanes request failed (${res.status})`)
   }
   return res.json()
+}
+
+/**
+ * USGS earthquake feed — keyless, CORS-open, public domain, updated every
+ * minute (Cache-Control max-age=60). Fetched straight from the client in
+ * BOTH deploy modes (like EONET): no proxy, no bake. The all_day feed always
+ * carries hundreds of global events, so there is no honest "empty" state —
+ * only a fetch error.
+ */
+const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson'
+export const QUAKES_REFRESH_MS = 60_000
+
+interface UsgsFeature {
+  id?: string
+  properties?: {
+    mag?: number | null
+    place?: string | null
+    time?: number | null
+    tsunami?: number | null
+    felt?: number | null
+    type?: string | null
+    url?: string | null
+  }
+  geometry?: { type?: string; coordinates?: [number, number, number] } | null
+}
+
+export async function fetchQuakes(): Promise<QuakePayload> {
+  const res = await fetch(USGS_URL)
+  if (!res.ok) throw new Error(`USGS earthquake feed failed (${res.status})`)
+  const raw = (await res.json()) as {
+    metadata?: { generated?: number }
+    features?: UsgsFeature[]
+  }
+  const quakes: Quake[] = []
+  for (const f of raw.features ?? []) {
+    const p = f.properties ?? {}
+    const c = f.geometry?.coordinates
+    // USGS sends null mag for some picks and can omit geometry — both make the
+    // event unrenderable (no size/color, no position); drop them honestly
+    if (f.geometry?.type !== 'Point' || !Array.isArray(c)) continue
+    const [lon, lat, depth] = c
+    if (typeof p.mag !== 'number' || !Number.isFinite(lon) || !Number.isFinite(lat)) continue
+    quakes.push({
+      id: f.id ?? `${lon},${lat},${p.time ?? 0}`,
+      mag: p.mag,
+      place: p.place ?? 'Unknown location',
+      time: typeof p.time === 'number' ? p.time : 0,
+      lon,
+      lat,
+      depthKm: Number.isFinite(depth) ? depth : null,
+      tsunami: p.tsunami === 1,
+      felt: typeof p.felt === 'number' ? p.felt : null,
+      type: p.type ?? 'earthquake',
+      url: p.url ?? '',
+    })
+  }
+  let strongestMag = -Infinity
+  let strongestPlace: string | null = null
+  let significant = 0
+  for (const q of quakes) {
+    if (q.mag >= 4.5) significant++
+    if (q.mag > strongestMag) {
+      strongestMag = q.mag
+      strongestPlace = q.place
+    }
+  }
+  // the feed's own generation time is the honest freshness anchor — but guard
+  // it like every other field: a malformed non-null `generated` would throw
+  // RangeError from toISOString() and reject an otherwise-valid payload,
+  // turning hundreds of real quakes into a false "feed unreachable"
+  const gen = raw.metadata?.generated
+  const fetchedAt = new Date(
+    typeof gen === 'number' && Number.isFinite(gen) ? gen : Date.now(),
+  ).toISOString()
+  return {
+    source: 'usgs',
+    windowHours: 24,
+    fetchedAt,
+    quakes,
+    counts: {
+      total: quakes.length,
+      significant,
+      strongestMag: quakes.length ? strongestMag : 0,
+      strongestPlace,
+    },
+  }
 }
 
 export interface HealthInfo {

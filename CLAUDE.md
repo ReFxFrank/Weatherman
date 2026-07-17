@@ -2,7 +2,8 @@
 
 Ember is a mission-control-styled web app: a dark rotating Earth in space with
 selectable **live hazard globes** — fires (NASA FIRMS), lightning (GOES GLM +
-Meteosat MTG-LI), severe weather (NWS/SPC), hurricanes (NHC + EONET). Live at
+Meteosat MTG-LI), severe weather (NWS/SPC), hurricanes (NHC + EONET),
+earthquakes (USGS). Live at
 https://refxfrank.github.io/Weatherman/ (redeployed every ~20 min by cron).
 
 Read next, in order:
@@ -77,10 +78,12 @@ Two deploy modes, same client code (`VITE_DATA_MODE=static` switches
   prefers a complete previous copy over a degraded-fresh build. The bake
   refuses to deploy only when there is literally nothing to serve.
 - **Not everything rides those two paths**: the client calls some upstreams
-  directly in BOTH modes — EONET events (`api.ts`), Photon geocoding
-  (`SearchBox.tsx`), NIFC perimeters (`perimeters.ts`), CARTO basemap
-  styles/tiles (`EmberMap.tsx`). A static Pages deploy still makes live
-  cross-origin requests; these must stay keyless and CORS-open.
+  directly in BOTH modes — EONET events (`api.ts`), USGS earthquakes
+  (`fetchQuakes` in `api.ts` — no proxy/bake at all, the whole quakes globe
+  is client-fetched), Photon geocoding (`SearchBox.tsx`), NIFC perimeters
+  (`perimeters.ts`), CARTO basemap styles/tiles (`EmberMap.tsx`). A static
+  Pages deploy still makes live cross-origin requests; these must stay
+  keyless and CORS-open.
 
 Client: React 18 + TS + Vite + Tailwind v4 (no `tailwind.config.js` — config
 is the `@tailwindcss/vite` plugin + the `@theme` block in `src/index.css`,

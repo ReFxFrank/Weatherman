@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import { FRP_STOPS } from '../lib/colors'
 import { CAT } from '../lib/hurricaneLayers'
 import { lightningColor } from '../lib/lightningBinary'
+import { quakeColor } from '../lib/quakeLayers'
 import type { GlobeId } from '../store'
 
 /**
@@ -179,6 +180,50 @@ function HurricaneLegend(_props: { hasMtg?: boolean }) {
   )
 }
 
+const QUAKE_GRADIENT = `linear-gradient(90deg, ${[0, 2.5, 4, 5, 6, 7, 8]
+  .map((m) => {
+    const [r, g, b] = quakeColor(m)
+    return `rgb(${r},${g},${b}) ${(m / 8) * 100}%`
+  })
+  .join(', ')})`
+
+function QuakeLegend(_props: { hasMtg?: boolean }) {
+  return (
+    <>
+      <div className="h-2 rounded-sm" style={{ background: QUAKE_GRADIENT }} />
+      <div className="mt-0.5 flex justify-between font-mono text-[9px] text-slate-500">
+        <span>M2</span>
+        <span>M4</span>
+        <span>M6</span>
+        <span>M8+</span>
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">magnitude · sizes &amp; colors the marks</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, #fecdd3 0%, #f43f5e 55%, transparent 75%)',
+              boxShadow: '0 0 6px rgba(244,63,94,0.9)',
+            }}
+          />
+          <span className="text-[10px] text-slate-400">earthquake · sized by magnitude</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-3 w-3 shrink-0 rounded-full border border-rose-300/70" />
+          <span className="text-[10px] text-slate-400">ripple · struck in the last hour</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          USGS resolves small quakes only where seismometers are dense (US, Japan, …), so a
+          tight cluster can mean more sensors, not more earthquakes; roughly M4.5+ is
+          globally complete. Past 24 h. Source: USGS (public domain).
+        </p>
+      </div>
+    </>
+  )
+}
+
 function FireLegend() {
   return (
     <>
@@ -242,6 +287,7 @@ const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
   lightning: LightningLegend,
   severe: SevereLegend,
   hurricanes: HurricaneLegend,
+  quakes: QuakeLegend,
 }
 
 export function Legend({

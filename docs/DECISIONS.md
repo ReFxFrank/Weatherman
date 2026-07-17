@@ -567,3 +567,66 @@ first-pass "it works" verification missed (all fixed before shipping):
   uncaught exceptions but exited on assertion failures only — an
   interaction-only crash (the pickers run outside React) would read as all
   PASS. Page errors now fail the run.
+
+
+## Phase 10 notes — the earthquakes globe (USGS)
+
+The fifth globe, chosen for effort-to-payoff: global, always-populated,
+public-domain, minute-fresh.
+
+- **Source → USGS `all_day.geojson`, fetched straight from the client in
+  BOTH deploy modes** (the EONET pattern), NOT proxied or baked. The feed is
+  keyless, `Access-Control-Allow-Origin: *`, `Cache-Control: max-age=60`
+  (verified live), and updates every minute — so a 60 s client poll gives
+  fresher data than the 20-min Pages cron a bake would ride, with zero
+  server or workflow changes. `src/lib/api.ts` `fetchQuakes` parses
+  `[lon, lat, depthKm]`, drops null-magnitude / geometry-less picks (USGS
+  sends both), and anchors freshness to the feed's own `metadata.generated`.
+  The all_day feed always carries hundreds of global events, so there is **no
+  honest empty state** — only a fetch-error chip. (No proxy means no
+  stale-on-error fallback; TanStack `keepPreviousData` holds the last good
+  payload across a transient blip, which is honest — the HUD timestamp is the
+  feed's own generation time.)
+- **Render → native MapLibre layers, not deck splats.** A few hundred points
+  of JSON is the severe/hurricanes regime, not the hundreds-of-thousands the
+  binary splat pipeline exists for. `quakeLayers.ts` stacks eq-ripple (an
+  expanding stroked ring on last-hour quakes), eq-glow (blurred,
+  magnitude-scaled — the splat-like bloom), eq-dot (solid core), and eq-label
+  (`M6.4` for the rare M ≥ 6, native symbol like the hurricane heads, because
+  deck text won't render on the globe). Magnitude drives a seismic color ramp
+  (slate → green → yellow → orange → rose → magenta → near-white) and a
+  fast-climbing radius curve.
+- **Ripple animation** = a self-contained rAF in EmberMap
+  (`setQuakeRipplePhase`) that drives a synchronized "sonar ping" via two
+  `setPaintProperty` calls, mounted only on the quakes globe and paused on
+  `document.hidden`. Quakes joins the deck-pulse skip list — its animation
+  has its own loop and never re-renders React, unlike the fire/lightning
+  pulse.
+- **MapLibre one-zoom-curve rule** (bug caught in verification): the selected-
+  quake emphasis first nested two zoom-based `interpolate` expressions inside
+  a `case`, which MapLibre rejects ("Only one zoom-based interpolate…"). Fix:
+  `radiusExpr` takes an optional per-feature `extra` factor folded INTO the
+  stop outputs, so the zoom interpolate stays the single top-level curve with
+  the selection `case` nested inside — the general pattern for zoom × feature
+  data.
+- **Detail card** (QuakeCard): click → magnitude + band, depth + shallow/
+  intermediate/deep, place, origin time (UTC + local + ago, guarded date),
+  coordinates, DYFI felt count, tsunami-evaluation flag, and the USGS event
+  link. Picking is native `queryRenderedFeatures` on the circle layers only
+  (eq-dot/eq-glow) — the eq-label symbol layer is deliberately excluded, both
+  because clicking a label is odd and because `queryRenderedFeatures` on a
+  symbol layer can throw mid-glyph-load (observed in the headless harness;
+  the app's picker is try/caught and never touches it). When the pad covers
+  several quakes the strongest wins. Selection is a stable USGS id resolved
+  against the current payload each refetch, so a quake aging out of the 24 h
+  window closes its own card.
+- **Coverage honesty** (non-negotiable): USGS resolves small quakes only
+  where seismometers are dense (US, Japan, …), so the California micro-quake
+  cluster is instrumentation, not extra seismicity — the legend says exactly
+  that, and that roughly M4.5+ is globally complete. Magnitude scaling means
+  the great quakes dominate the eye regardless of the small-event bias.
+- **Harness**: `headless-check.mjs` gained the `eq-` layer prefix and now
+  wraps each per-layer `queryRenderedFeatures` in try/catch (a symbol layer
+  throwing mid-glyph-load reports `err`, not an aborted report — this also
+  protected the hurricane/eonet symbol layers). `verify-cards.mjs` clicks the
+  strongest live quake and asserts the card.

@@ -1,4 +1,4 @@
-import { Flame, Shell, Tornado, Zap, type LucideIcon } from 'lucide-react'
+import { Activity, Flame, Shell, Tornado, Zap, type LucideIcon } from 'lucide-react'
 
 /**
  * THE globe registry — the single source of truth for which data globes
@@ -56,6 +56,14 @@ export const GLOBE_DEFS = [
     activeCls: 'border-violet-400/40 bg-violet-400/15 text-violet-300',
     feedName: 'NHC FEED',
     attribution: 'Hurricanes: NOAA NHC + NASA EONET',
+  },
+  {
+    id: 'quakes',
+    label: 'QUAKES',
+    Icon: Activity,
+    activeCls: 'border-orange-400/40 bg-orange-400/15 text-orange-300',
+    feedName: 'USGS FEED',
+    attribution: 'Earthquakes: USGS',
   },
 ] as const satisfies readonly GlobeDef[]
 

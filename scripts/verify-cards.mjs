@@ -221,6 +221,44 @@ console.log('HURRICANES globe — storm/forecast cards')
 }
 
 // ---------------------------------------------------------------------------
+console.log('QUAKES globe — earthquake card')
+{
+  const page = await newPage({ width: 1280, height: 800 })
+  await page.goto(`${base}/?globe=quakes&quality=performance&lat=20&lon=-40&z=1.6`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  })
+  const ready = await waitFor(page, () => {
+    const map = window.__emberMap
+    if (!map || !map.getSource('eq-quakes')) return false
+    return /\d+ quakes/.test(document.body.innerText)
+  })
+  if (!ready) fail('quakes globe did not boot')
+  else {
+    // pick the strongest quake in the source (most visible, definitely present)
+    const q = await waitFor(page, () => {
+      const feats = window.__emberMap.querySourceFeatures('eq-quakes')
+      if (!feats.length) return null
+      let best = feats[0]
+      for (const f of feats) if ((f.properties.mag ?? -9) > (best.properties.mag ?? -9)) best = f
+      return { lon: best.geometry.coordinates[0], lat: best.geometry.coordinates[1], mag: best.properties.mag }
+    }, undefined, 20_000)
+    if (!q) skip('no quakes in the feed to click (should never happen for all_day)')
+    else {
+      const sel = await clickAt(page, q.lon, q.lat, 4, 'selectedQuake')
+      if (sel?.id) {
+        const t = await page.evaluate(() => document.body.innerText)
+        if (/EARTHQUAKE/.test(t) && /M\d/.test(t)) {
+          ok(`clicked M${q.mag} quake → earthquake card rendered`)
+          await page.screenshot({ path: 'verify-quake-card.png' })
+        } else fail('quake selected but card text missing')
+      } else fail(`quake click selected ${JSON.stringify(sel)}`)
+    }
+  }
+  await page.close()
+}
+
+// ---------------------------------------------------------------------------
 console.log('MOBILE bottom sheet — per-globe tabs')
 {
   const page = await newPage({ width: 375, height: 812 })

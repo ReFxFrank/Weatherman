@@ -9,6 +9,7 @@ import type {
   FireData,
   HurricanePayload,
   LightningData,
+  QuakePayload,
   SeverePayload,
 } from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
@@ -22,6 +23,13 @@ import {
   syncHurricaneLayers,
 } from '../lib/hurricaneLayers'
 import { pickSevereFeature, SEVERE_CLICK_LAYERS, syncSevereLayers } from '../lib/severeLayers'
+import {
+  hideQuakeRipple,
+  pickQuakeFeature,
+  QUAKE_CLICK_LAYERS,
+  setQuakeRipplePhase,
+  syncQuakeLayers,
+} from '../lib/quakeLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -105,6 +113,8 @@ export function EmberMap({
   lightning,
   severe,
   hurricanes,
+  quakes,
+  quakesStale,
   entranceReady,
   events,
   quality,
@@ -122,6 +132,11 @@ export function EmberMap({
   severe: SeverePayload | undefined
   /** tropical-cyclone payload (NHC/EONET), undefined until its globe is active */
   hurricanes: HurricanePayload | undefined
+  /** earthquake payload (USGS), undefined until its globe is active */
+  quakes: QuakePayload | undefined
+  /** the USGS feed is erroring while showing last-good data — withdraw the
+   *  ripple's "last hour" recency cue */
+  quakesStale: boolean
   /** active globe's data arrived OR its query errored — the entrance must
    *  not wait forever on a feed that is down (review finding); App owns the
    *  per-globe query state, so App computes this */
@@ -169,6 +184,7 @@ export function EmberMap({
   const playhead = useEmber((s) => s.playhead)
   const selectedEventId = useEmber((s) => s.selectedEventId)
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
+  const selectedQuake = useEmber((s) => s.selectedQuake)
 
   // Storm-head highlight key (NHC id / EONET title); forecast-point
   // selections have no head to emphasize.
@@ -178,6 +194,7 @@ export function EmberMap({
       : selectedHurricane?.type === 'global'
         ? selectedHurricane.title
         : null
+  const quakeSelId = selectedQuake?.id ?? null
 
   // Live mode shows the whole fetched window; a playhead shows a 24h slice
   // ending `playhead` days ago. Either way it's one GPU uniform.
@@ -229,6 +246,8 @@ export function EmberMap({
     severe,
     hurricanes,
     hurricaneSelKey,
+    quakes,
+    quakeSelId,
   })
   styleStateRef.current = {
     projection,
@@ -246,6 +265,8 @@ export function EmberMap({
     severe,
     hurricanes,
     hurricaneSelKey,
+    quakes,
+    quakeSelId,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -269,6 +290,11 @@ export function EmberMap({
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'hurricanes',
       selectedKey: s.hurricaneSelKey,
+    })
+    syncQuakeLayers(map, s.quakes ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'quakes',
+      selectedId: s.quakeSelId,
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -340,7 +366,14 @@ export function EmberMap({
   // The severe/hurricanes globes render no deck layers, so don't burn 30
   // renders/s on them (review finding).
   useEffect(() => {
-    if (!cameraSettled || ignite < 1 || globe === 'severe' || globe === 'hurricanes') return
+    if (
+      !cameraSettled ||
+      ignite < 1 ||
+      globe === 'severe' ||
+      globe === 'hurricanes' ||
+      globe === 'quakes'
+    )
+      return
     let raf = 0
     let last = 0
     const tick = (now: number) => {
@@ -407,6 +440,46 @@ export function EmberMap({
     })
   }, [mapLoaded, hurricanes, globe, hurricaneSelKey])
 
+  // Dedicated re-sync for the quakes payload (60 s refresh) + selection.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncQuakeLayers(map, quakes ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'quakes',
+      selectedId: quakeSelId,
+    })
+  }, [mapLoaded, quakes, globe, quakeSelId])
+
+  // Ripple animation: a self-contained rAF drives the sonar-ping ring via
+  // setPaintProperty, mounted only on the quakes globe (so it never re-renders
+  // React, unlike the deck pulse). document.hidden pauses it; cleanup just
+  // cancels the rAF (the phase is derived from the global clock, so it resumes
+  // in sync, and on globe switch the sync effect hides every eq-* layer, so a
+  // frozen ring never shows). During a USGS outage (quakesStale) the ripple is
+  // withdrawn instead of animated — the frozen payload can't back a "last
+  // hour" claim (review finding).
+  useEffect(() => {
+    if (!mapLoaded || globe !== 'quakes') return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    if (quakesStale) {
+      hideQuakeRipple(map)
+      return
+    }
+    let raf = 0
+    let last = 0
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick)
+      if (document.hidden || now - last < 33) return
+      last = now
+      setQuakeRipplePhase(map, now)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [mapLoaded, globe, quakesStale])
+
   // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {
     if (!mapLoaded) return
@@ -451,6 +524,10 @@ export function EmberMap({
         setEmber({ selectedHurricane: pickHurricaneFeature(map, e.point) })
         return
       }
+      if (s.globe === 'quakes') {
+        setEmber({ selectedQuake: pickQuakeFeature(map, e.point) })
+        return
+      }
       if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
       if (!s.full) return
       const idx = findNearestHotspot(
@@ -475,10 +552,16 @@ export function EmberMap({
   // hovering a clickable feature (review finding). Only attached on the two
   // native-picking globes, so it never fights EONET's own cursor handling.
   useEffect(() => {
-    if (!mapLoaded || (globe !== 'severe' && globe !== 'hurricanes')) return
+    if (!mapLoaded || (globe !== 'severe' && globe !== 'hurricanes' && globe !== 'quakes')) return
     const map = mapRef.current?.getMap()
     if (!map) return
-    const clickLayers = (globe === 'severe' ? SEVERE_CLICK_LAYERS : HURRICANE_CLICK_LAYERS) as readonly string[]
+    const clickLayers = (
+      globe === 'severe'
+        ? SEVERE_CLICK_LAYERS
+        : globe === 'hurricanes'
+          ? HURRICANE_CLICK_LAYERS
+          : QUAKE_CLICK_LAYERS
+    ) as readonly string[]
     const onMove = (e: MapMouseEvent) => {
       const present = clickLayers.filter((l) => map.getLayer(l))
       const hit = present.length > 0 && map.queryRenderedFeatures(e.point, { layers: present }).length > 0
@@ -531,7 +614,7 @@ export function EmberMap({
     // splats render beneath the event reticles once those layers exist
     const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
     // all-native globes (polygons/lines/points — no deck splats)
-    if (globe === 'severe' || globe === 'hurricanes') return []
+    if (globe === 'severe' || globe === 'hurricanes' || globe === 'quakes') return []
     if (globe === 'lightning') {
       return lightning
         ? buildLightningLayers({

@@ -6,10 +6,12 @@ import {
   fetchFireDecoded,
   fetchHurricanes,
   fetchLightningDecoded,
+  fetchQuakes,
   fetchQuota,
   fetchSevere,
   HURRICANES_REFRESH_MS,
   LIGHTNING_REFRESH_MS,
+  QUAKES_REFRESH_MS,
   REFRESH_MS,
   SEVERE_REFRESH_MS,
 } from './lib/api'
@@ -30,6 +32,7 @@ import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
 import { HurricaneCard, type ResolvedHurricaneSelection } from './components/HurricaneCard'
+import { QuakeCard } from './components/QuakeCard'
 import { SevereCard } from './components/SevereCard'
 import { Legend } from './components/Legend'
 import { SearchBox } from './components/SearchBox'
@@ -57,6 +60,7 @@ export default function App() {
   const selectedEventId = useEmber((s) => s.selectedEventId)
   const selectedSevere = useEmber((s) => s.selectedSevere)
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
+  const selectedQuake = useEmber((s) => s.selectedQuake)
   const viewEpoch = useEmber((s) => s.viewEpoch)
   const showChoropleth = useEmber((s) => s.showChoropleth)
   const showPerimeters = useEmber((s) => s.showPerimeters)
@@ -127,6 +131,23 @@ export default function App() {
     placeholderData: keepPreviousData,
     refetchInterval: HURRICANES_REFRESH_MS,
     enabled: globe === 'hurricanes',
+  })
+
+  // Earthquakes globe (USGS): keyless, CORS-open GeoJSON fetched straight from
+  // the client in both deploy modes (like EONET) — updated every minute, so a
+  // 60 s poll matches the feed. Always populated (global past-24h), so there
+  // is no honest empty state, only a fetch error.
+  const {
+    data: quakesData,
+    isLoading: quakesLoading,
+    isError: quakesError,
+    error: quakesErr,
+  } = useQuery({
+    queryKey: ['quakes'],
+    queryFn: fetchQuakes,
+    placeholderData: keepPreviousData,
+    refetchInterval: QUAKES_REFRESH_MS,
+    enabled: globe === 'quakes',
   })
 
   // Wall-clock tick for the non-fire globes: lightning lag chips and the
@@ -225,6 +246,13 @@ export default function App() {
     return selectedHurricane
   }, [selectedHurricane, hurricanesData])
 
+  // A clicked quake resolves against the current payload — one that ages out
+  // of the 24 h window on refetch drops its card with its mark on the globe.
+  const resolvedQuake = useMemo(() => {
+    if (!selectedQuake || !quakesData) return null
+    return quakesData.quakes.find((q) => q.id === selectedQuake.id) ?? null
+  }, [selectedQuake, quakesData])
+
   // The entrance flies once the ACTIVE globe's feed resolves — data or a
   // definitive error; never park in orbit forever on a dead feed. Keyed
   // exhaustively: a new GlobeId without an entry is a compile error.
@@ -233,6 +261,7 @@ export default function App() {
     lightning: Boolean(lightningDecoded) || lightningError,
     severe: Boolean(severeShown) || severeError,
     hurricanes: Boolean(hurricanesData) || hurricanesError,
+    quakes: Boolean(quakesData) || quakesError,
   }
   const entranceReady = feedReadiness[globe]
 
@@ -484,6 +513,22 @@ export default function App() {
           )}
       </>
     ),
+    // USGS all_day always carries hundreds of global events — so an
+    // unreachable feed is an error, and a successful-but-empty response is a
+    // likely upstream problem, never a real "zero earthquakes on Earth in
+    // 24 h" all-clear ("empty ≠ degraded").
+    quakes: (
+      <>
+        {quakesError && errChip('USGS earthquake feed unreachable — retrying automatically')}
+        {quakesData && !quakesError && quakesData.counts.total === 0 && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+            USGS returned no earthquakes — the global 24 h feed is never truly empty, so this is
+            likely an upstream problem; retrying automatically
+          </div>
+        )}
+      </>
+    ),
   }
 
   const feedStatus: Record<GlobeId, ReactNode> = {
@@ -602,6 +647,40 @@ export default function App() {
         )}
       </>
     ),
+    quakes: (
+      <>
+        {quakesLoading && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.quakes.feedName}…</span>
+        )}
+        {quakesError && (
+          <span className="text-red-400">
+            FEED ERROR — {quakesErr instanceof Error ? quakesErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {quakesData && !quakesError && (
+          <span>
+            <span className="text-orange-300">{quakesData.counts.total.toLocaleString()}</span> quakes
+            {quakesData.counts.total > 0 && (
+              <>
+                {' · strongest '}
+                <span
+                  className={
+                    quakesData.counts.strongestMag >= 6
+                      ? 'text-rose-300'
+                      : quakesData.counts.strongestMag >= 4.5
+                        ? 'text-orange-300'
+                        : 'text-slate-300'
+                  }
+                >
+                  M{quakesData.counts.strongestMag.toFixed(1)}
+                </span>
+              </>
+            )}{' '}
+            · last 24h · USGS
+          </span>
+        )}
+      </>
+    ),
   }
 
   return (
@@ -613,6 +692,8 @@ export default function App() {
         lightning={globe === 'lightning' ? lightningData : undefined}
         severe={globe === 'severe' ? severeShown : undefined}
         hurricanes={globe === 'hurricanes' ? hurricanesData : undefined}
+        quakes={globe === 'quakes' ? quakesData : undefined}
+        quakesStale={globe === 'quakes' && quakesError && Boolean(quakesData)}
         entranceReady={entranceReady}
         events={events}
         quality={quality}
@@ -650,6 +731,12 @@ export default function App() {
         <HurricaneCard
           selection={resolvedHurricaneSelection}
           onClose={() => setEmber({ selectedHurricane: null })}
+          className={CARD_POS}
+        />
+      ) : globe === 'quakes' && resolvedQuake ? (
+        <QuakeCard
+          quake={resolvedQuake}
+          onClose={() => setEmber({ selectedQuake: null })}
           className={CARD_POS}
         />
       ) : (
@@ -751,6 +838,12 @@ export default function App() {
             {new Date(hurricanesData.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
+        {globe === 'quakes' && quakesData && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            {quakesData.counts.significant} ≥ M4.5 · global · past 24h · USGS · upd{' '}
+            {new Date(quakesData.fetchedAt).toISOString().slice(11, 16)}Z
+          </div>
+        )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
@@ -765,9 +858,11 @@ export default function App() {
                 ? `${severeShown?.alerts.features.length ?? 0} alert areas 🌪`
                 : globe === 'hurricanes'
                   ? `${(hurricanesData?.counts.nhcActive ?? 0) + (hurricanesData?.counts.globalActive ?? 0)} storms 🌀`
-                  : `${(data?.count ?? 0).toLocaleString()}${
-                      data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
-                    }`}
+                  : globe === 'quakes'
+                    ? `${(quakesData?.counts.total ?? 0).toLocaleString()} quakes 🌍`
+                    : `${(data?.count ?? 0).toLocaleString()}${
+                        data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                      }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}
