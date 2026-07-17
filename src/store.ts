@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { isGlobeId, type GlobeId } from './lib/globes'
 import type { QualityTier } from './lib/quality'
 import { detectQualityTier } from './lib/quality'
+import type { HurricaneSelection, SevereSelection } from './lib/types'
 
 /**
  * UI state (§5.3): filters apply as GPU uniform updates — only `source` and
@@ -57,12 +58,17 @@ export interface EmberState {
   selectedEventId: string | null
   /** index into the current FireData of the hotspot whose card is open */
   selectedHotspot: number | null
+  /** clicked severe-globe feature (alert/report) whose card is open */
+  selectedSevere: SevereSelection | null
+  /** clicked hurricanes-globe feature (storm/forecast point) whose card is open */
+  selectedHurricane: HurricaneSelection | null
   /** right-hand stats panel expanded (§5.4) */
   statsOpen: boolean
   /** real-time day/night terminator shading (§5.7) */
   showTerminator: boolean
-  /** which mobile bottom-sheet tab is open (null = closed) */
-  sheet: 'filters' | 'stats' | null
+  /** which mobile bottom-sheet tab is open (null = closed) — filters/stats
+   *  are the fire globe's tabs; display/legend serve the other globes */
+  sheet: 'filters' | 'stats' | 'display' | 'legend' | null
   /** bumped (throttled) when the viewport settles — recomputes in-view stats */
   viewEpoch: number
 }
@@ -107,6 +113,8 @@ export const useEmber = create<EmberState>(() => ({
   playing: false,
   selectedEventId: null,
   selectedHotspot: null,
+  selectedSevere: null,
+  selectedHurricane: null,
   statsOpen: true,
   showTerminator: true,
   sheet: null,
@@ -122,7 +130,14 @@ export function setEmber(partial: Partial<EmberState>) {
   }
   // Selections and sheets belong to the globe they were made on.
   if (partial.globe !== undefined) {
-    partial = { selectedHotspot: null, selectedEventId: null, sheet: null, ...partial }
+    partial = {
+      selectedHotspot: null,
+      selectedEventId: null,
+      selectedSevere: null,
+      selectedHurricane: null,
+      sheet: null,
+      ...partial,
+    }
   }
   useEmber.setState(partial)
 }

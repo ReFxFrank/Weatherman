@@ -176,15 +176,35 @@ async function main() {
   // Severe weather (NWS/SPC, US): small JSON payload; zero active warnings
   // is a legitimate quiet-day state, so unlike lightning an "empty" result
   // still deploys. On fetch failure, reuse the currently-deployed copy.
-  let severe: { file: string; fetchedAt: string; counts?: unknown } | null = null
+  let severe: { file: string; fetchedAt: string; counts?: unknown; degraded?: string[] } | null = null
   if (process.env.SKIP_SEVERE !== '1') {
     try {
       const payload = await fetchSevereOnce()
+      // NOTE: unlike hurricanes, a degraded severe build is shipped FRESH,
+      // not swapped for a complete previous deploy. Severe's headline data is
+      // the NWS warnings/watches, and those only reach this line when they
+      // succeeded (an alerts failure throws to the catch below). Only the
+      // SECONDARY sources (SPC outlook shading, report dots) can degrade — so
+      // the fresh build always carries the safety-relevant, minutes-fresh
+      // warnings, and preferring a ~20-min-old previous deploy would trade
+      // those away to preserve secondary shading (review finding). The client
+      // shows a PARTIAL chip + suppresses the all-clear from `degraded`.
       await writeFile(join(OUT_DIR, 'severe.json'), JSON.stringify(payload))
-      severe = { file: 'severe.json', fetchedAt: payload.fetchedAt, counts: payload.counts }
-      console.log(
-        `baked severe.json: ${JSON.stringify(payload.counts)} · outlook ${payload.outlook ? 'ok' : 'missing'}`,
-      )
+      severe = {
+        file: 'severe.json',
+        fetchedAt: payload.fetchedAt,
+        counts: payload.counts,
+        ...(payload.degraded?.length ? { degraded: payload.degraded } : {}),
+      }
+      if (payload.degraded?.length) {
+        console.warn(
+          `baked severe.json with FRESH warnings but degraded sources (${payload.degraded.join(', ')})`,
+        )
+      } else {
+        console.log(
+          `baked severe.json: ${JSON.stringify(payload.counts)} · outlook ${payload.outlook ? 'ok' : 'missing'}`,
+        )
+      }
     } catch (err) {
       const prev = await reusePreviousJson('severe.json')
       if (prev) {

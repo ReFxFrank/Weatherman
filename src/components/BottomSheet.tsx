@@ -1,13 +1,19 @@
-import { BarChart3, SlidersHorizontal, X } from 'lucide-react'
+import { BarChart3, Info, SlidersHorizontal, X, type LucideIcon } from 'lucide-react'
 import type { FireStats } from '../lib/stats'
-import { setEmber, useEmber } from '../store'
-import { FilterContent } from './FilterPanel'
+import { setEmber, useEmber, type EmberState } from '../store'
+import { DisplayContent, FilterContent } from './FilterPanel'
+import { Legend } from './Legend'
 import { StatsContent } from './StatsPanel'
 import { glass } from './ui'
 
+type SheetTab = NonNullable<EmberState['sheet']>
+
 /**
- * Mobile chrome (§5.6): the desktop side panels dock into a bottom sheet with
- * Filters/Stats tabs, opened from two floating buttons. Hidden ≥lg.
+ * Mobile chrome (§5.6): the desktop side panels dock into a bottom sheet,
+ * opened from two floating buttons. Hidden ≥lg. Tabs are per-globe: the fire
+ * globe gets its Filters/Stats panels; every other globe gets the shared
+ * Display controls and its Legend — previously unreachable on mobile, which
+ * hid the coverage-honesty copy the legends carry (review finding).
  */
 export function BottomSheet({
   eventsCount,
@@ -15,35 +21,45 @@ export function BottomSheet({
   newSince,
   onJumpTo,
   onExport,
+  hasMtg,
 }: {
   eventsCount?: number
   stats: FireStats | null
   newSince: { count: number; sinceIso: string } | null
   onJumpTo: (t: { index: number; lon: number; lat: number }) => void
   onExport: (format: 'csv' | 'geojson') => void
+  /** Meteosat present in the lightning payload (legend copy differs) */
+  hasMtg?: boolean
 }) {
   const sheet = useEmber((s) => s.sheet)
+  const globe = useEmber((s) => s.globe)
+
+  const tabs: Array<{ key: SheetTab; label: string; icon: LucideIcon }> =
+    globe === 'fire'
+      ? [
+          { key: 'filters', label: 'Filters & layers', icon: SlidersHorizontal },
+          { key: 'stats', label: 'Statistics', icon: BarChart3 },
+        ]
+      : [
+          { key: 'display', label: 'Display', icon: SlidersHorizontal },
+          { key: 'legend', label: 'Legend', icon: Info },
+        ]
 
   return (
     <div className="lg:hidden">
       {!sheet && (
         <div className="absolute bottom-28 left-3 z-20 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => setEmber({ sheet: 'filters' })}
-            title="Filters & layers"
-            className={`flex h-11 w-11 items-center justify-center text-slate-200 ${glass}`}
-          >
-            <SlidersHorizontal className="h-4.5 w-4.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setEmber({ sheet: 'stats' })}
-            title="Statistics"
-            className={`flex h-11 w-11 items-center justify-center text-slate-200 ${glass}`}
-          >
-            <BarChart3 className="h-4.5 w-4.5" />
-          </button>
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setEmber({ sheet: t.key })}
+              title={t.label}
+              className={`flex h-11 w-11 items-center justify-center text-slate-200 ${glass}`}
+            >
+              <t.icon className="h-4.5 w-4.5" />
+            </button>
+          ))}
         </div>
       )}
 
@@ -60,12 +76,7 @@ export function BottomSheet({
             <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-white/15" aria-hidden />
             <header className="flex items-center gap-2 px-3 py-2">
               <div className="flex flex-1 overflow-hidden rounded-md border border-white/10 bg-black/30">
-                {(
-                  [
-                    { key: 'filters', label: 'Filters & layers', icon: SlidersHorizontal },
-                    { key: 'stats', label: 'Statistics', icon: BarChart3 },
-                  ] as const
-                ).map((t) => (
+                {tabs.map((t) => (
                   <button
                     key={t.key}
                     type="button"
@@ -93,8 +104,12 @@ export function BottomSheet({
             <div className="min-h-0 flex-1 overflow-y-auto pb-[max(env(safe-area-inset-bottom),0.75rem)]">
               {sheet === 'filters' ? (
                 <FilterContent eventsCount={eventsCount} />
-              ) : (
+              ) : sheet === 'stats' ? (
                 <StatsContent stats={stats} newSince={newSince} onJumpTo={onJumpTo} onExport={onExport} />
+              ) : sheet === 'display' ? (
+                <DisplayContent />
+              ) : (
+                <Legend globe={globe} hasMtg={hasMtg} className="" />
               )}
             </div>
           </div>

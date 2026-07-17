@@ -12,3 +12,6 @@ dist/
 .DS_Store
 *.log
 *.nc
+
+# local verification artifacts (headless-check / verify-cards screenshots)
+*.png

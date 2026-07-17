@@ -29,6 +29,8 @@ import { EventCard } from './components/EventCard'
 import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
+import { HurricaneCard, type ResolvedHurricaneSelection } from './components/HurricaneCard'
+import { SevereCard } from './components/SevereCard'
 import { Legend } from './components/Legend'
 import { SearchBox } from './components/SearchBox'
 import { Starfield } from './components/Starfield'
@@ -53,6 +55,8 @@ export default function App() {
   const playhead = useEmber((s) => s.playhead)
   const selectedHotspot = useEmber((s) => s.selectedHotspot)
   const selectedEventId = useEmber((s) => s.selectedEventId)
+  const selectedSevere = useEmber((s) => s.selectedSevere)
+  const selectedHurricane = useEmber((s) => s.selectedHurricane)
   const viewEpoch = useEmber((s) => s.viewEpoch)
   const showChoropleth = useEmber((s) => s.showChoropleth)
   const showPerimeters = useEmber((s) => s.showPerimeters)
@@ -142,10 +146,18 @@ export default function App() {
   // changes between fetches.
   const severeShown = useMemo(() => {
     if (!severeData) return undefined
-    const nowIso = new Date().toISOString()
+    // epoch comparison, NOT string comparison: NWS expiry timestamps carry
+    // the alert's LOCAL UTC offset ("…T23:00:00-05:00"), so lexicographic
+    // ISO comparison against a Z-suffixed now drops still-active warnings
+    // once the UTC date rolls past the offset-local date
+    const now = Date.now()
     const kept = severeData.alerts.features.filter((f) => {
       const exp = (f.properties as { expires?: string | null } | null)?.expires
-      return !exp || exp > nowIso
+      // fail OPEN: a missing OR unparseable expiry keeps the alert on the map
+      // (dropping an active warning is the dangerous direction); only a
+      // parseable timestamp in the past removes it. Matches the card
+      // validator so map and card agree.
+      return !exp || !(Date.parse(exp) <= now)
     })
     const counts = { ...severeData.counts }
     if (kept.length !== severeData.alerts.features.length) {
@@ -173,6 +185,45 @@ export default function App() {
     // uiTick advances the expiry clock between refetches
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [severeData, uiTick])
+
+  // A clicked alert's card must vanish exactly when its polygon does. A
+  // polygon leaves the globe two ways: it expires (client expiry filter), or
+  // it drops out of the NWS active feed on the next refetch — cancelled or
+  // superseded early, routine for storm-based warnings. Both must close the
+  // card, so validate the snapshot against the SAME filtered set the map
+  // draws (severeShown), not just the wall clock (review finding — showing a
+  // lapsed "happening now" tornado warning is safety-adjacent). severeShown
+  // already re-derives on uiTick, so the expiry countdown stays live.
+  const validSevereSelection = useMemo(() => {
+    if (!selectedSevere) return null
+    if (selectedSevere.type === 'alert') {
+      const { kind, expires, areaDesc } = selectedSevere.props
+      const stillDrawn = severeShown?.alerts.features.some((f) => {
+        const p = f.properties as { kind?: string; expires?: string | null; areaDesc?: string } | null
+        return p?.kind === kind && p?.expires === expires && p?.areaDesc === areaDesc
+      })
+      if (!stillDrawn) return null
+    }
+    // report selections are snapshots of a past fact (a report already
+    // happened) — they don't expire and stay pinned until deselected
+    return selectedSevere
+  }, [selectedSevere, severeShown])
+
+  // Storm-head selections resolve against the CURRENT payload — a storm
+  // that dissipated (or an EONET event that aged out) drops its card with
+  // its head. Forecast points are snapshots of the clicked feature.
+  const resolvedHurricaneSelection = useMemo<ResolvedHurricaneSelection | null>(() => {
+    if (!selectedHurricane || !hurricanesData) return null
+    if (selectedHurricane.type === 'storm') {
+      const storm = hurricanesData.storms.find((s) => s.id === selectedHurricane.id)
+      return storm ? { type: 'storm', storm } : null
+    }
+    if (selectedHurricane.type === 'global') {
+      const storm = hurricanesData.global.find((g) => g.title === selectedHurricane.title)
+      return storm ? { type: 'global', storm } : null
+    }
+    return selectedHurricane
+  }, [selectedHurricane, hurricanesData])
 
   // The entrance flies once the ACTIVE globe's feed resolves — data or a
   // definitive error; never park in orbit forever on a dead feed. Keyed
@@ -384,8 +435,19 @@ export default function App() {
     severe: (
       <>
         {severeError && errChip('Severe weather feed unreachable — retrying automatically')}
+        {severeShown && !severeError && (severeShown.degraded?.length ?? 0) > 0 && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+            Some SPC sources unavailable ({severeShown.degraded!.join(', ')}) — outlook/report
+            coverage may be incomplete
+          </div>
+        )}
+        {/* the quiet-day chip is only honest when every source reported
+            fresh — a stale or degraded payload must not assert an all-clear */}
         {severeShown &&
           !severeError &&
+          !severeShown.degraded?.length &&
+          !severeShown.stale &&
           severeShown.counts.tornadoWarnings +
             severeShown.counts.severeWarnings +
             severeShown.counts.tornadoWatches +
@@ -409,10 +471,12 @@ export default function App() {
             may be incomplete
           </div>
         )}
-        {/* the all-clear is only honest when every source actually reported */}
+        {/* the all-clear is only honest when every source actually reported
+            fresh — never assert cyclone-free over stale or degraded data */}
         {hurricanesData &&
           !hurricanesError &&
           !hurricanesData.degraded?.length &&
+          !hurricanesData.stale &&
           hurricanesData.counts.nhcActive + hurricanesData.counts.globalActive === 0 && (
             <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
               No active tropical cyclones in the NHC or EONET feeds
@@ -500,6 +564,7 @@ export default function App() {
             {/* SPC report files cover the 12Z–12Z convective day */}
             {severeShown.counts.reports} reports since 12Z
             {severeShown.counts.unmapped > 0 ? ` · ${severeShown.counts.unmapped} unmapped` : ''}
+            {severeShown.degraded?.length ? ' · PARTIAL' : ''}
             {severeShown.stale ? ' · STALE' : ''}
           </span>
         )}
@@ -575,6 +640,18 @@ export default function App() {
         />
       ) : globe === 'fire' && selectedEventId ? (
         <EventCard events={events} className={CARD_POS} />
+      ) : globe === 'severe' && validSevereSelection ? (
+        <SevereCard
+          selection={validSevereSelection}
+          onClose={() => setEmber({ selectedSevere: null })}
+          className={CARD_POS}
+        />
+      ) : globe === 'hurricanes' && resolvedHurricaneSelection ? (
+        <HurricaneCard
+          selection={resolvedHurricaneSelection}
+          onClose={() => setEmber({ selectedHurricane: null })}
+          className={CARD_POS}
+        />
       ) : (
         <Legend
           globe={globe}
@@ -583,15 +660,14 @@ export default function App() {
         />
       )}
 
-      {globe === 'fire' && (
-        <BottomSheet
-          eventsCount={events?.length}
-          stats={stats}
-          newSince={newSince}
-          onJumpTo={jumpToFire}
-          onExport={onExport}
-        />
-      )}
+      <BottomSheet
+        eventsCount={events?.length}
+        stats={stats}
+        newSince={newSince}
+        onJumpTo={jumpToFire}
+        onExport={onExport}
+        hasMtg={Boolean(lightningDecoded?.meta.sats.some((s) => s.id.startsWith('MTI')))}
+      />
 
       {/* status chips: error / stale / empty (§5.6 graceful states) */}
       <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex max-w-[92vw] -translate-x-1/2 flex-col items-center gap-2">

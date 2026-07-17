@@ -162,12 +162,13 @@ sheet (`BottomSheet.tsx`).
   z-fighting MapLibre's triangulated globe tile mesh (there is no terrain);
   wire positions are 2-component [lon, lat] — the client derives
   3-component [lon, lat, lift] render positions at attribute-derive time.
-- **Fire filters exist twice**: as GPU `DataFilterExtension` ranges
-  (`fireLayers.ts`) and as the CPU predicate `passesFireFilters`
-  (`src/lib/stats.ts`, plus an inlined copy in `computeFireStats`) reused by
-  stats, export, nearest-hotspot picking and the choropleth. Change filter
-  semantics in ALL of them or headline counts and exports silently disagree
-  with what's glowing on the map.
+- **Fire filters exist FIVE times**: as GPU `DataFilterExtension` ranges
+  (`fireLayers.ts`), the CPU predicate `passesFireFilters` (`src/lib/
+  stats.ts` — used by export and the choropleth), and inlined copies in
+  `computeFireStats` (stats.ts), `findNearestHotspot` (nearestHotspot.ts)
+  and App's `validSelection` memo. Change filter semantics in ALL of them
+  or headline counts, exports, picking and the selection ring silently
+  disagree with what's glowing on the map.
 - Native-layer sync modules must be idempotent and style-swap-safe: guarded
   by try/catch, re-run on `style.load`, sources keyed by `fetchedAt`/
   `renderKey` so unchanged data skips `setData`.

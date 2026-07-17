@@ -448,3 +448,122 @@ Highlights of what the review caught before it shipped further:
   reuse-previous-deploy fallback as severe, now extracted into a shared
   `reusePreviousJson()` helper (review finding: the severe block had
   re-implemented `reusePrevious()` inline).
+
+
+## Phase 9 notes — honesty hardening + severe/hurricane detail cards
+
+- **Severe payload gains the hurricanes-style `degraded` marker** (the
+  "empty ≠ degraded" non-negotiable had a hole): SPC outlook/report fetch
+  failures previously degraded silently to null/empty — a total SPC outage
+  rendered exactly like a quiet day. Now: a failed sub-source falls back to
+  its sub-TTL cache when one exists (older data beats none; NOT flagged),
+  and is recorded in `degraded: [...]` only when the section ends up empty
+  because the source was down. A failed CSV trio no longer poisons the
+  reports cache (failures never overwrite it, so the next 60 s rebuild
+  retries upstream). Client renders an amber "SPC sources unavailable" chip
+  + `PARTIAL` HUD flag and suppresses the quiet-day chip; live cache guards
+  `lastGood` against degraded builds and the bake prefers a complete
+  previous deploy over degraded-fresh — both copied from hurricanes.
+- **Expiry-comparison bug fixed in `severeShown`** (found while wiring card
+  expiry): NWS `expires` timestamps carry the alert's LOCAL UTC offset
+  ("…T23:00:00-05:00") and were compared lexicographically against a
+  Z-suffixed now — an active warning whose offset-local date lags the UTC
+  date was dropped hours early (false quiet during the late-evening UTC
+  rollover, which is peak US severe season time). Epoch comparison via
+  `Date.parse` now; the detail cards use the same clock.
+- **Mobile parity for non-fire globes**: the BottomSheet is per-globe —
+  fire keeps Filters/Stats; lightning/severe/hurricanes get Display (the
+  shared projection/basemap/night-shade/quality controls) + Legend tabs.
+  Until now phones had NO controls and NO legend off the fire globe, which
+  hid the coverage-honesty copy (GLM rings, US-only severe) the project
+  treats as an accuracy requirement.
+- **Detail cards land on the severe + hurricanes globes** (deferred at
+  Phases 7/8): native-layer hit-testing via `queryRenderedFeatures` with a
+  6 px pad (report dots and forecast points are small), claim-priority
+  reports > warnings > watches and heads > forecast points, wired through
+  the same unclaimed-click handler as fire picking (EONET's
+  `preventDefault` still wins). Severe alerts carry no stable upstream id,
+  so alert/report selections are SNAPSHOTS of the clicked feature's
+  properties, validated at render: an alert card expires exactly when its
+  polygon is expiry-filtered (same `uiTick` clock). Hurricane selections
+  are stable keys (NHC id / EONET title) resolved against the CURRENT
+  payload each render — a dissipated storm drops its card with its head;
+  forecast points are snapshots. Card copy keeps the honesty rules: SPC
+  magnitudes "as reported" (UNK never renders as a fake zero), report times
+  are file-reported UTC, EONET storm cards state they carry no intensity
+  data, NHC cards repeat the cone-is-center-path caveat, forecast cards
+  note uncertainty grows with lead time.
+- **Storm-head selection highlight** reuses the EONET selected-reticle
+  expression idiom (`selKey` property + case expression) — no extra layers,
+  restyled in the same idempotent sync pass. Severe polygons get no
+  highlight (no stable id to match on); the card names the alert instead —
+  revisit only if NWS ids join the trimmed payload.
+- **`scripts/verify-cards.mjs`** joins the committed verification harness:
+  boots the dev app headless, REALLY clicks a warning polygon, a report
+  dot, a storm head and a forecast point (via `querySourceFeatures` →
+  project → mouse click), asserts the store selection + rendered card, and
+  checks the per-globe mobile sheet tabs. Skips honestly when the live
+  feeds have nothing to click (quiet weather is real data). Windows note:
+  under `npm run dev` on this machine the tsx-watch server child can die
+  silently — run `npx tsx server/index.ts` separately if `/api/*` 502s.
+
+### Phase 9 review round (adversarial workflow — 10 findings fixed)
+
+A five-lens review with adversarial verification caught real defects the
+first-pass "it works" verification missed (all fixed before shipping):
+
+- **Alert cards outlived cancelled/superseded warnings** (major, safety):
+  `validSevereSelection` invalidated a card only by wall-clock expiry, so a
+  warning that left the NWS active feed early (cancelled or re-issued —
+  routine for storm-based warnings) kept its "N min until expires" card
+  counting down over an empty globe for the full remaining expiry. Fixed by
+  re-validating the alert snapshot against the same filtered set the map
+  draws (`severeShown`) each refetch, mirroring how hurricane storm
+  selections resolve against the live payload.
+- **The bake threw away fresh warnings on any SPC blip** (major): the new
+  severe bake copied the hurricanes "prefer a complete previous deploy over
+  degraded-fresh" policy — but severe's degradable sources are only the
+  SECONDARY outlook/report shading; the headline NWS warnings are always
+  fresh when a build is degraded (an alerts failure throws instead). So a
+  single flaky SPC CSV would ship a ~20-min-old deploy and drop the newest,
+  most safety-relevant warnings. Severe now always ships fresh-degraded
+  (the client already labels it PARTIAL and suppresses the all-clear), and
+  the four SPC sub-fetches get the one-retry treatment EONET has.
+- **Live-mode SPC fallback served unbounded, unflagged stale data**
+  (major): on a long-lived proxy the outlook/report sub-TTL caches stay
+  warm, so a persistent SPC outage served a superseded outlook — or the
+  PREVIOUS convective day's reports as "since 12Z" — under a fresh
+  timestamp forever. The failure fallback is now age-bounded (~3× TTL);
+  past that it serves empty + flags `degraded`.
+- **Featureless-200 outlook cached as a false quiet** (minor): a 200
+  lacking `features` resolved through the success path, cached `null`, and
+  shipped an unflagged empty outlook for the full 10-min TTL. Now treated
+  as a failed fetch (never cached, flagged), matching the file's own
+  never-cache-a-null-zone rule.
+- **Quiet-day all-clear over stale/degraded data** (minor honesty): the
+  severe and hurricanes "no active …" chips checked `degraded` but not
+  `stale`; a stale payload with zero events asserted an all-clear. Both now
+  also require `!stale`.
+- **`Date.parse` NaN could drop an active warning** (minor): the expiry
+  filter's `Date.parse(exp) > now` fails CLOSED on an unparseable timestamp
+  (drops the alert from map AND counts) while the card validator failed
+  open — inconsistent, and the dangerous direction. Both now fail open: a
+  missing or unparseable expiry keeps the warning shown.
+- **HurricaneCard could white-screen the app** (defensive): unguarded
+  `new Date(upstreamString).toISOString()` on NHC `lastUpdate` / EONET
+  `lastDate` throws `RangeError` on a malformed date, and there is no error
+  boundary. Now routed through a `parseDate` guard that renders "—"/
+  "unknown" instead of crashing.
+- **Saffir-Simpson label on non-tropical systems** (minor honesty): the
+  storm card appended "category N"/"tropical storm" from wind speed alone,
+  which misdescribes potential/subtropical/post-tropical systems (their
+  title already carries the correct type). The category phrase now shows
+  only for genuine tropical cyclones (TD/TS/HU/MH/TY).
+- **Cursor flicker over overlapping features** (minor): per-layer
+  mouseenter/mouseleave dropped the pointer while still hovering a
+  clickable feature where the report/head layer stacks overlap. Replaced
+  with one globe-scoped `mousemove` hit-test.
+- **`verify-cards.mjs` ignored page errors** (minor): the harness collected
+  uncaught exceptions but exited on assertion failures only — an
+  interaction-only crash (the pickers run outside React) would read as all
+  PASS. Page errors now fail the run.

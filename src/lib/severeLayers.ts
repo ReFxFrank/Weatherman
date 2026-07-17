@@ -1,5 +1,5 @@
-import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
-import type { SeverePayload } from './types'
+import type { GeoJSONSource, Map as MapLibreMap, PointLike } from 'maplibre-gl'
+import type { SevereAlertProps, SeverePayload, SevereSelection } from './types'
 
 /**
  * The severe-weather globe's native layer stack (bottom → top):
@@ -42,7 +42,10 @@ function reportsFc(p: SeverePayload): GeoJSON.FeatureCollection {
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [r.lon, r.lat] },
-        properties: { rtype, mag: r.mag, location: r.location, state: r.state, time: r.time },
+        // lat/lon ride in properties too: queryRenderedFeatures returns
+        // tile-quantized geometry, and the detail card must show the
+        // report's exact reported position, not a few-km-off rounding
+        properties: { rtype, mag: r.mag, location: r.location, state: r.state, time: r.time, lat: r.lat, lon: r.lon },
       })
     }
   }
@@ -171,4 +174,71 @@ export function syncSevereLayers(
   } catch {
     // best-effort during style swaps; the next sync pass recreates everything
   }
+}
+
+/** Clickable layers, in claim-priority order: reports (small, drawn on top)
+ *  beat warnings beat watches — a report dot inside a warning polygon must
+ *  select the report. Also used for the pointer-cursor hover affordance. */
+export const SEVERE_CLICK_LAYERS = [
+  'svr-reports-dot',
+  'svr-reports-glow',
+  'svr-warn-fill',
+  'svr-watch-fill',
+] as const
+
+const CLICK_PAD_PX = 6
+
+/** Resolve a map click on the severe globe to a selection (detail card).
+ *  Queries with a small pixel pad so the tiny report dots are tappable. */
+export function pickSevereFeature(
+  map: MapLibreMap,
+  point: { x: number; y: number },
+): SevereSelection | null {
+  let feats: ReturnType<MapLibreMap['queryRenderedFeatures']>
+  try {
+    const box: [PointLike, PointLike] = [
+      [point.x - CLICK_PAD_PX, point.y - CLICK_PAD_PX],
+      [point.x + CLICK_PAD_PX, point.y + CLICK_PAD_PX],
+    ]
+    feats = map.queryRenderedFeatures(box, {
+      layers: SEVERE_CLICK_LAYERS.filter((l) => map.getLayer(l)),
+    })
+  } catch {
+    return null // style mid-swap
+  }
+  for (const layerId of SEVERE_CLICK_LAYERS) {
+    const f = feats.find((x) => x.layer.id === layerId)
+    if (!f) continue
+    const p = f.properties as Record<string, unknown>
+    if (layerId.startsWith('svr-reports')) {
+      const lat = Number(p.lat)
+      const lon = Number(p.lon)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+      return {
+        type: 'report',
+        rtype: p.rtype as 'torn' | 'wind' | 'hail',
+        report: {
+          time: String(p.time ?? ''),
+          mag: String(p.mag ?? ''),
+          location: String(p.location ?? ''),
+          state: String(p.state ?? ''),
+          lat,
+          lon,
+        },
+      }
+    }
+    return {
+      type: 'alert',
+      props: {
+        kind: p.kind as SevereAlertProps['kind'],
+        event: String(p.event ?? ''),
+        severity: typeof p.severity === 'string' ? p.severity : null,
+        headline: typeof p.headline === 'string' ? p.headline : null,
+        areaDesc: String(p.areaDesc ?? ''),
+        onset: typeof p.onset === 'string' ? p.onset : null,
+        expires: typeof p.expires === 'string' ? p.expires : null,
+      },
+    }
+  }
+  return null
 }

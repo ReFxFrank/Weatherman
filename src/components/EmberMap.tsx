@@ -16,8 +16,12 @@ import { buildFireLayers } from '../lib/fireLayers'
 import { buildLightningLayers } from '../lib/lightningLayers'
 import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
 import { syncGlmCoverage } from '../lib/coverage'
-import { syncHurricaneLayers } from '../lib/hurricaneLayers'
-import { syncSevereLayers } from '../lib/severeLayers'
+import {
+  HURRICANE_CLICK_LAYERS,
+  pickHurricaneFeature,
+  syncHurricaneLayers,
+} from '../lib/hurricaneLayers'
+import { pickSevereFeature, SEVERE_CLICK_LAYERS, syncSevereLayers } from '../lib/severeLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -164,6 +168,16 @@ export function EmberMap({
   const days = useEmber((s) => s.days)
   const playhead = useEmber((s) => s.playhead)
   const selectedEventId = useEmber((s) => s.selectedEventId)
+  const selectedHurricane = useEmber((s) => s.selectedHurricane)
+
+  // Storm-head highlight key (NHC id / EONET title); forecast-point
+  // selections have no head to emphasize.
+  const hurricaneSelKey =
+    selectedHurricane?.type === 'storm'
+      ? selectedHurricane.id
+      : selectedHurricane?.type === 'global'
+        ? selectedHurricane.title
+        : null
 
   // Live mode shows the whole fetched window; a playhead shows a 24h slice
   // ending `playhead` days ago. Either way it's one GPU uniform.
@@ -214,6 +228,7 @@ export function EmberMap({
     coverageSats,
     severe,
     hurricanes,
+    hurricaneSelKey,
   })
   styleStateRef.current = {
     projection,
@@ -230,6 +245,7 @@ export function EmberMap({
     coverageSats,
     severe,
     hurricanes,
+    hurricaneSelKey,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -252,6 +268,7 @@ export function EmberMap({
     syncHurricaneLayers(map, s.hurricanes ?? null, {
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'hurricanes',
+      selectedKey: s.hurricaneSelKey,
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -377,7 +394,8 @@ export function EmberMap({
     })
   }, [mapLoaded, severe, globe])
 
-  // Same dedicated re-sync for the hurricanes payload (5-min refresh).
+  // Same dedicated re-sync for the hurricanes payload (5-min refresh) —
+  // also re-runs on selection change to restyle the highlighted storm head.
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
@@ -385,8 +403,9 @@ export function EmberMap({
     syncHurricaneLayers(map, hurricanes ?? null, {
       beforeId: EONET_ICON_LAYER,
       visible: globe === 'hurricanes',
+      selectedKey: hurricaneSelKey,
     })
-  }, [mapLoaded, hurricanes, globe])
+  }, [mapLoaded, hurricanes, globe, hurricaneSelKey])
 
   // The terminator moves with the sun — refresh its geometry every minute.
   useEffect(() => {
@@ -413,8 +432,8 @@ export function EmberMap({
     )
   }, [mapLoaded])
 
-  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange, fireGlobe })
-  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange, fireGlobe }
+  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe })
+  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe }
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
@@ -422,6 +441,16 @@ export function EmberMap({
     const onClick = (e: MapMouseEvent) => {
       if (e.defaultPrevented) return // an EONET marker claimed this click
       const s = pickStateRef.current
+      // severe/hurricanes: native-layer hit-testing (their features are
+      // MapLibre polygons/points, not deck splats); empty space deselects
+      if (s.globe === 'severe') {
+        setEmber({ selectedSevere: pickSevereFeature(map, e.point) })
+        return
+      }
+      if (s.globe === 'hurricanes') {
+        setEmber({ selectedHurricane: pickHurricaneFeature(map, e.point) })
+        return
+      }
       if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
       if (!s.full) return
       const idx = findNearestHotspot(
@@ -438,6 +467,29 @@ export function EmberMap({
       map.off('click', onClick)
     }
   }, [mapLoaded])
+
+  // Pointer cursor over clickable severe/hurricane features. A single
+  // mousemove hit-test (scoped to the active globe's click layers) instead of
+  // per-layer mouseenter/mouseleave: the report and storm-head stacks
+  // overlap, so independent enter/leave handlers drop the pointer while still
+  // hovering a clickable feature (review finding). Only attached on the two
+  // native-picking globes, so it never fights EONET's own cursor handling.
+  useEffect(() => {
+    if (!mapLoaded || (globe !== 'severe' && globe !== 'hurricanes')) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    const clickLayers = (globe === 'severe' ? SEVERE_CLICK_LAYERS : HURRICANE_CLICK_LAYERS) as readonly string[]
+    const onMove = (e: MapMouseEvent) => {
+      const present = clickLayers.filter((l) => map.getLayer(l))
+      const hit = present.length > 0 && map.queryRenderedFeatures(e.point, { layers: present }).length > 0
+      map.getCanvas().style.cursor = hit ? 'pointer' : ''
+    }
+    map.on('mousemove', onMove)
+    return () => {
+      map.off('mousemove', onMove)
+      map.getCanvas().style.cursor = ''
+    }
+  }, [mapLoaded, globe])
 
   // Imperative bridge for search/stats navigation + viewport stats.
   useEffect(() => {

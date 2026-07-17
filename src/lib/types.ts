@@ -158,9 +158,32 @@ export interface SeverePayload {
   reports: { torn: SevereReport[]; wind: SevereReport[]; hail: SevereReport[] }
   counts: SevereCounts
   stale?: boolean
+  /** sub-sources that failed this build (e.g. 'outlook', 'reports') — empty
+   *  sections there mean "source down", NOT "quiet day"; never render an
+   *  all-clear over these */
+  degraded?: string[]
   /** client-derived setData key (expiry filtering re-keys between fetches) */
   renderKey?: string
 }
+
+/** Trimmed NWS alert properties as the severe payload carries them. */
+export interface SevereAlertProps {
+  kind: SevereKind
+  event: string
+  severity: string | null
+  headline: string | null
+  areaDesc: string
+  onset: string | null
+  expires: string | null
+}
+
+/** A clicked feature on the severe globe. Alerts carry no stable upstream
+ *  id, so the selection is a SNAPSHOT of the clicked feature's properties —
+ *  validated at render time (expired alerts drop their card, mirroring the
+ *  expiry filter on the polygons). */
+export type SevereSelection =
+  | { type: 'alert'; props: SevereAlertProps }
+  | { type: 'report'; rtype: 'torn' | 'wind' | 'hail'; report: SevereReport }
 
 // ---------------------------------------------------------------------------
 // Tropical cyclones (NHC + EONET) — mirrors server/hurricanes.ts
@@ -214,6 +237,28 @@ export interface HurricanePayload {
    *  down", NOT "no storms"; never render an all-clear over these */
   degraded?: string[]
 }
+
+/** Snapshot of a clicked NHC forecast point's per-tau properties. */
+export interface ForecastPointProps {
+  stormname: string | null
+  datelbl: string | null
+  validtime: string | null
+  tau: number | null
+  maxwind: number | null
+  gust: number | null
+  mslp: number | null
+  ssnum: number | null
+  advisnum: string | null
+  basin: string | null
+}
+
+/** A clicked feature on the hurricanes globe. Storm heads reference the
+ *  payload by stable key (NHC id / EONET title) and are re-validated against
+ *  the current payload at render time; forecast points are snapshots. */
+export type HurricaneSelection =
+  | { type: 'storm'; id: string }
+  | { type: 'global'; title: string }
+  | { type: 'forecast'; props: ForecastPointProps }
 
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {

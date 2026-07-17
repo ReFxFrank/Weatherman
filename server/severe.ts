@@ -63,6 +63,14 @@ export interface SeverePayload {
   reports: { torn: SevereReport[]; wind: SevereReport[]; hail: SevereReport[] }
   counts: SevereCounts
   stale?: boolean
+  /**
+   * Sub-sources that failed during this build (e.g. 'outlook', 'reports') —
+   * their sections are empty because the SOURCE was down, not because the
+   * day is quiet. Clients must not render an all-clear over a degraded
+   * payload. (Alerts are the headline source: their failure fails the whole
+   * build instead, triggering the stale fallback.)
+   */
+  degraded?: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -264,18 +272,30 @@ let inflight: Promise<SeverePayload> | null = null
 /** slow-moving sources keep a private TTL under the 60 s payload cache:
  *  the outlook changes ~5x/day and report CSVs every ~5 min — refetching
  *  them every rebuild is pure waste (review finding) */
-let outlookCache: { at: number; value: GeoJSON.FeatureCollection | null } | null = null
+let outlookCache: { at: number; value: GeoJSON.FeatureCollection } | null = null
 let reportsCache: { at: number; value: SeverePayload['reports'] } | null = null
 const OUTLOOK_TTL_MS = 10 * 60_000
 const REPORTS_TTL_MS = 4 * 60_000
+/** A failure-fallback sub-source stays servable only within ~3× its TTL of
+ *  its last success; past that a persistent outage would serve a superseded
+ *  outlook — or, worse, the PREVIOUS convective day's reports as "since 12Z"
+ *  (SPC files reset at 12Z) — as if current. Beyond the bound we serve
+ *  empty + flag `degraded` instead of lying (review finding). */
+const OUTLOOK_FALLBACK_MAX_MS = 3 * OUTLOOK_TTL_MS
+const REPORTS_FALLBACK_MAX_MS = 3 * REPORTS_TTL_MS
 
 async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload> {
   // alerts are the headline data — their failure fails the fetch (triggering
-  // stale fallback); outlook/reports degrade to empty per-source. All five
-  // fetches share ONE Promise.all so every promise has its handler attached
-  // immediately — a fast alerts rejection during a slow SPC response must
-  // reject this call, not become an unhandled rejection that kills the
-  // process (review finding).
+  // stale fallback); outlook/reports degrade per-source, but the degradation
+  // is RECORDED: an empty-because-SPC-is-down section must never read as a
+  // quiet day (the hurricanes globe set this convention). A failed fetch
+  // falls back to the sub-TTL cache when one exists (older data beats none —
+  // that path is NOT flagged) and never overwrites that cache, so the next
+  // rebuild retries upstream. All five fetches share ONE Promise.all so
+  // every promise has its handler attached immediately — a fast alerts
+  // rejection during a slow SPC response must reject this call, not become
+  // an unhandled rejection that kills the process (review finding).
+  const degraded: string[] = []
   const outlookFresh = outlookCache && Date.now() - outlookCache.at < OUTLOOK_TTL_MS
   const reportsFresh = reportsCache && Date.now() - reportsCache.at < REPORTS_TTL_MS
   const [{ fc, counts }, outlook, reports] = await Promise.all([
@@ -283,23 +303,46 @@ async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload>
     outlookFresh
       ? Promise.resolve(outlookCache!.value)
       : fetchOutlook()
+          // one retry: SPC/runner blips shouldn't degrade a whole cycle
+          // (matches the EONET retry in hurricanes.ts)
+          .catch(() => fetchOutlook())
           .then((v) => {
-            outlookCache = { at: Date.now(), value: v }
-            return v
+            // a 200 without `features` is a failed fetch, not a quiet
+            // outlook — never cache null (same rule as null zone geometries)
+            if (v) {
+              outlookCache = { at: Date.now(), value: v }
+              return v
+            }
+            throw new Error('outlook response carried no features')
           })
           .catch((err) => {
             console.error('[severe] outlook failed:', (err as Error).message)
-            return outlookCache?.value ?? null
+            const usable = outlookCache && Date.now() - outlookCache.at < OUTLOOK_FALLBACK_MAX_MS
+            if (!usable) degraded.push('outlook')
+            return usable ? outlookCache!.value : null
           }),
     reportsFresh
       ? Promise.resolve(reportsCache!.value)
       : Promise.all([
-          fetchReports('torn').catch(() => [] as SevereReport[]),
-          fetchReports('wind').catch(() => [] as SevereReport[]),
-          fetchReports('hail').catch(() => [] as SevereReport[]),
+          fetchReports('torn').catch(() => fetchReports('torn')).catch(() => null),
+          fetchReports('wind').catch(() => fetchReports('wind')).catch(() => null),
+          fetchReports('hail').catch(() => fetchReports('hail')).catch(() => null),
         ]).then(([torn, wind, hail]) => {
-          const value = { torn, wind, hail }
-          reportsCache = { at: Date.now(), value }
+          // the failure fallback is age-bounded: a report cache older than
+          // ~3× its TTL may straddle the 12Z reset, so past that we serve
+          // empty + degrade rather than mislabel yesterday's reports
+          const prevUsable = reportsCache && Date.now() - reportsCache.at < REPORTS_FALLBACK_MAX_MS
+          const prev = prevUsable ? reportsCache!.value : undefined
+          const anyFailed = !torn || !wind || !hail
+          const value = {
+            torn: torn ?? prev?.torn ?? [],
+            wind: wind ?? prev?.wind ?? [],
+            hail: hail ?? prev?.hail ?? [],
+          }
+          // only a fully-fresh trio may become the cache: caching a failure's
+          // empty array would serve the false quiet for a whole sub-TTL
+          if (!anyFailed) reportsCache = { at: Date.now(), value }
+          else if (!prev) degraded.push('reports')
           return value
         }),
   ])
@@ -312,6 +355,7 @@ async function buildPayload(mode: SeverePayload['mode']): Promise<SeverePayload>
     outlook,
     reports,
     counts,
+    ...(degraded.length ? { degraded } : {}),
   }
 }
 
@@ -325,7 +369,10 @@ export async function getSeverePayload(): Promise<SeverePayload> {
     inflight = buildPayload('live')
       .then((payload) => {
         cached = { at: Date.now(), payload }
-        lastGood = payload
+        // a degraded build (SPC down) still serves fresh, but must not
+        // REPLACE a complete fallback copy — outages would erode the stale
+        // chain one section at a time (hurricanes convention)
+        if (!payload.degraded || !lastGood || lastGood.degraded) lastGood = payload
         return payload
       })
       .finally(() => {

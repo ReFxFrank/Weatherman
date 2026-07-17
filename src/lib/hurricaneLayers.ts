@@ -1,5 +1,5 @@
-import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
-import type { ActiveStorm, GlobalStorm, HurricanePayload } from './types'
+import type { GeoJSONSource, Map as MapLibreMap, PointLike } from 'maplibre-gl'
+import type { ActiveStorm, ForecastPointProps, GlobalStorm, HurricanePayload, HurricaneSelection } from './types'
 
 /**
  * The hurricanes globe's native layer stack (bottom → top):
@@ -54,7 +54,7 @@ export const CAT = {
 }
 
 /** kt → category color (Saffir-Simpson wind boundaries). */
-function intensityColor(kt: number): string {
+export function intensityColor(kt: number): string {
   if (kt < 34) return CAT.td
   if (kt < 64) return CAT.ts
   if (kt < 83) return CAT.c1
@@ -93,11 +93,14 @@ const POINT_COLOR = [
 ] as never
 
 function headsFc(storms: ActiveStorm[], global: GlobalStorm[]): GeoJSON.FeatureCollection {
+  // selKey: stable click/highlight key — NHC id for NHC storms, EONET title
+  // for global storms (EONET events carry no id in the payload)
   const features: GeoJSON.Feature[] = storms.map((s) => ({
     type: 'Feature',
     geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
     properties: {
       kind: 'nhc',
+      selKey: s.id,
       color: intensityColor(s.intensityKt),
       label: `${s.name.toUpperCase()} · ${s.intensityKt}KT`,
     },
@@ -108,7 +111,7 @@ function headsFc(storms: ActiveStorm[], global: GlobalStorm[]): GeoJSON.FeatureC
     features.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [last[0], last[1]] },
-      properties: { kind: 'global', color: '#7dd3fc', label: g.title.toUpperCase() },
+      properties: { kind: 'global', selKey: g.title, color: '#7dd3fc', label: g.title.toUpperCase() },
     })
   }
   return { type: 'FeatureCollection', features }
@@ -153,7 +156,11 @@ let lastKey = ''
 export function syncHurricaneLayers(
   map: MapLibreMap,
   payload: HurricanePayload | null,
-  { beforeId, visible }: { beforeId?: string; visible: boolean },
+  {
+    beforeId,
+    visible,
+    selectedKey = null,
+  }: { beforeId?: string; visible: boolean; selectedKey?: string | null },
 ): void {
   try {
     // Same conventions as the severe stack: fetchedAt keys setData, data
@@ -270,10 +277,79 @@ export function syncHurricaneLayers(
       },
     })
 
+    // selected storm head: enlarged dot + brighter glow (same expression
+    // idiom as the EONET selected-reticle emphasis)
+    const isSel = ['==', ['coalesce', ['get', 'selKey'], ''], selectedKey ?? ' ']
+    map.setPaintProperty('hur-head-dot', 'circle-radius', [
+      'case',
+      isSel,
+      7,
+      ['case', ['==', ['get', 'kind'], 'nhc'], 4.5, 3],
+    ] as never)
+    map.setPaintProperty('hur-head-glow', 'circle-opacity', ['case', isSel, 0.75, 0.45] as never)
+
     for (const id of HURRICANE_LAYER_IDS) {
       map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
     }
   } catch {
     // best-effort during style swaps; the next sync pass recreates everything
   }
+}
+
+/** Clickable layers, in claim-priority order: storm heads (current position,
+ *  richest card) beat forecast points. Labels select their storm too. Also
+ *  used for the pointer-cursor hover affordance. */
+export const HURRICANE_CLICK_LAYERS = [
+  'hur-head-dot',
+  'hur-head-glow',
+  'hur-head-label',
+  'hur-points-dot',
+] as const
+
+const CLICK_PAD_PX = 6
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
+
+/** Resolve a map click on the hurricanes globe to a selection (detail card). */
+export function pickHurricaneFeature(
+  map: MapLibreMap,
+  point: { x: number; y: number },
+): HurricaneSelection | null {
+  let feats: ReturnType<MapLibreMap['queryRenderedFeatures']>
+  try {
+    const box: [PointLike, PointLike] = [
+      [point.x - CLICK_PAD_PX, point.y - CLICK_PAD_PX],
+      [point.x + CLICK_PAD_PX, point.y + CLICK_PAD_PX],
+    ]
+    feats = map.queryRenderedFeatures(box, {
+      layers: HURRICANE_CLICK_LAYERS.filter((l) => map.getLayer(l)),
+    })
+  } catch {
+    return null // style mid-swap
+  }
+  for (const layerId of HURRICANE_CLICK_LAYERS) {
+    const f = feats.find((x) => x.layer.id === layerId)
+    if (!f) continue
+    const p = f.properties as Record<string, unknown>
+    if (layerId.startsWith('hur-head')) {
+      const selKey = str(p.selKey)
+      if (!selKey) return null
+      return p.kind === 'nhc' ? { type: 'storm', id: selKey } : { type: 'global', title: selKey }
+    }
+    const props: ForecastPointProps = {
+      stormname: str(p.stormname),
+      datelbl: str(p.datelbl),
+      validtime: str(p.validtime),
+      tau: num(p.tau),
+      maxwind: num(p.maxwind),
+      gust: num(p.gust),
+      mslp: num(p.mslp),
+      ssnum: num(p.ssnum),
+      advisnum: typeof p.advisnum === 'number' ? String(p.advisnum) : str(p.advisnum),
+      basin: str(p.basin),
+    }
+    return { type: 'forecast', props }
+  }
+  return null
 }
