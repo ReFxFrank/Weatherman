@@ -34,6 +34,39 @@ interface ManifestEntry {
   count: number
   bytes: number
   fetchedAt: string
+  /** true when the upstream fetch failed and the previous deploy's payload
+   *  was reused — the data is older than this bake, but present */
+  reused?: boolean
+}
+
+const FALLBACK_BASE = (process.env.FALLBACK_BASE ?? '').trim().replace(/\/$/, '')
+
+/**
+ * Upstream outage fallback: refetch the currently-deployed copy of this
+ * payload so one bad FIRMS window can't strip datasets from the site
+ * (observed: FIRMS unreachable from Actions runners for ~1 h — the bake
+ * failed everything and the deploy was refused). Returns null when there is
+ * no previous deploy or it isn't a valid payload.
+ */
+async function reusePrevious(file: string): Promise<{ count: number; bytes: Uint8Array; fetchedAt: string } | null> {
+  if (!FALLBACK_BASE) return null
+  try {
+    const res = await fetch(`${FALLBACK_BASE}/data/${file}`, { signal: AbortSignal.timeout(30_000) })
+    if (!res.ok) return null
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    // validate: must decode as our wire format with a sane header
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    const headerLen = view.getUint32(0, true)
+    if (headerLen <= 0 || headerLen > bytes.byteLength - 4) return null
+    const header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + headerLen))) as {
+      count?: number
+      fetchedAt?: string
+    }
+    if (typeof header.count !== 'number' || header.count <= 0) return null
+    return { count: header.count, bytes, fetchedAt: header.fetchedAt ?? 'unknown' }
+  } catch {
+    return null
+  }
 }
 
 async function main() {
@@ -54,9 +87,27 @@ async function main() {
             `${(bin.byteLength / 1e6).toFixed(1)}MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
         )
       } catch (err) {
-        // One bad feed must not kill the whole deploy — bake what works.
-        failures.push(`${file}: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
-        console.error(`FAILED ${file}:`, err instanceof Error ? err.message.slice(0, 200) : err)
+        // One bad feed must not kill the whole deploy — bake what works,
+        // and reuse the previous deploy's copy of what doesn't.
+        const prev = await reusePrevious(file)
+        if (prev) {
+          await writeFile(join(OUT_DIR, file), prev.bytes)
+          baked.push({
+            source,
+            window,
+            file,
+            count: prev.count,
+            bytes: prev.bytes.byteLength,
+            fetchedAt: prev.fetchedAt,
+            reused: true,
+          })
+          console.warn(
+            `REUSED previous ${file} (${prev.count.toLocaleString()} rows from ${prev.fetchedAt}) — upstream: ${err instanceof Error ? err.message.slice(0, 120) : err}`,
+          )
+        } else {
+          failures.push(`${file}: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+          console.error(`FAILED ${file}:`, err instanceof Error ? err.message.slice(0, 200) : err)
+        }
       }
     }
   }
@@ -98,8 +149,12 @@ async function main() {
   await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))
   console.log(`manifest.json: ${baked.length} baked, ${failures.length} failed`)
 
-  if (baked.length === 0) {
-    console.error('no datasets baked — refusing to deploy an empty feed')
+  // Refuse to deploy only when there is literally nothing to serve — fresh,
+  // reused, or lightning. (A deploy with data beats no deploy: a skipped run
+  // leaves whatever won the last race live, and stale-labeled data beats a
+  // broken site.)
+  if (baked.length === 0 && !lightning) {
+    console.error('nothing baked or reusable — refusing to deploy an empty feed')
     process.exit(1)
   }
 }

@@ -59,6 +59,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A branch-based ("legacy") Pages config makes GitHub run its own Jekyll
+      # deploy of the RAW SOURCE TREE on every push, racing this workflow —
+      # whichever finishes last wins, and when the legacy one wins the site is
+      # a white page (source index.html references /src/main.tsx). Flip the
+      # site to workflow-only deployments; harmless no-op once flipped.
+      - name: Ensure Pages deploys from Actions only (kill the legacy race)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" | jq -r '.build_type // empty')
+          echo "Pages build_type: '$current'"
+          if [ -n "$current" ] && [ "$current" != "workflow" ]; then
+            code=$(curl -s -o /tmp/pages-update.txt -w "%{http_code}" -X PUT \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
+              -d '{"build_type":"workflow"}')
+            if [ "$code" = "204" ] || [ "$code" = "200" ]; then
+              echo "::notice title=Pages switched to workflow deploys::The legacy branch/Jekyll deploy no longer races this workflow."
+            else
+              cat /tmp/pages-update.txt || true
+              echo "::warning title=Pages still deploys the raw branch::Could not switch build_type (HTTP $code). One-time manual fix: Settings → Pages → Build and deployment → Source: 'GitHub Actions'."
+            fi
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -73,6 +100,10 @@ jobs:
         env:
           FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
           OUT_DIR: dist/data
+          # Per-file fallback: when an upstream fetch fails (FIRMS was
+          # unreachable from Actions runners for ~1h tonight), reuse the
+          # currently-deployed payload instead of dropping the dataset.
+          FALLBACK_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
         run: npx tsx scripts/bake-data.ts
 
       - uses: actions/configure-pages@v5
