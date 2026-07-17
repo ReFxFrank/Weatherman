@@ -20,6 +20,7 @@ import {
   fetchAndEncode,
   type PayloadMeta,
 } from './firms'
+import { getLightningPayload } from './glm'
 
 // Honor HTTP(S)_PROXY/NO_PROXY if the host environment routes egress through a
 // proxy (no-op when those vars are unset).
@@ -114,6 +115,25 @@ app.get('/api/hotspots', async (c) => {
   } catch (err) {
     const status = err instanceof HttpError ? err.status : 502
     return c.json({ error: err instanceof Error ? err.message : 'upstream failure' }, status as 400 | 502)
+  }
+})
+
+/**
+ * GOES GLM lightning — rolling window of flashes (server/glm.ts). The first
+ * requests return a partial window (meta.backfill < 1) that fills within a
+ * minute or two as the background ingest catches up; clients poll every ~60 s.
+ */
+app.get('/api/lightning', (c) => {
+  try {
+    const entry = getLightningPayload()
+    c.header('Cache-Control', 'public, max-age=30')
+    if (c.req.query('format') === 'json') {
+      return c.json({ ...entry.meta })
+    }
+    c.header('Content-Type', 'application/octet-stream')
+    return c.body(entry.bin.slice().buffer as ArrayBuffer)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'glm failure' }, 502)
   }
 })
 

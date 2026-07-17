@@ -257,3 +257,50 @@ for debugging.
   listener warns if any future code path sets a bearing anyway. Revisit only
   if deck's `GlobeViewport` gains bearing/pitch support.
 - Not the 25 km splat lift: measured lift parallax at world zoom is <1 px.
+
+## Phase 6 notes — the lightning globe + globe framework
+
+- **Globe framework**: `store.globe` (`?globe=` deep link) selects which data
+  globe is on screen; the shell (camera, starfield, terminator, search,
+  quality tiers) is shared. Fire-only surfaces (filters/stats/timeline/EONET/
+  choropleth/perimeters/picking) are gated by globe; each globe brings its own
+  deck layer stack, HUD readout, and legend. The paused globe's query stops
+  polling (TanStack `enabled`), and its cached payload makes switching back
+  instant.
+- **Lightning source → GOES GLM via public S3** (research-verified live):
+  keyless, public-domain, one NetCDF granule per satellite per 20 s, landing
+  ~10–30 s after observation. NetCDF-4 is HDF5 → decoded with `h5wasm` in
+  Node (netcdfjs is NetCDF-3 only). Flash timestamps quantize to the granule
+  start (20 s — irrelevant at a 60-min window). Only quality-flag-0 flashes
+  are kept; energy is stored in femtojoules.
+- **Rolling-window ingest** (server/glm.ts): lazy background loop (starts on
+  first `/api/lightning` request, idle-stops after 10 min) lists both buckets,
+  fetches newest-first, evicts past window+slack. First responses are a
+  partial window — `meta.backfill` (fraction of listed granules decoded) lets
+  the HUD say "filling N%" instead of lying about totals. Baked mode
+  (`lightning.bin`, same wire conventions as FIRMS) fetches the full window
+  per Pages cron run (~4 s, ~45 MB from S3).
+- **Coverage honesty**: GOES-West + GOES-East see the Americas, not the
+  planet — and GOES-East's GLM feed was in a real multi-hour outage while
+  this shipped. Per-satellite freshness ships in the payload header and
+  renders as HUD chips ("West live 1m · East DARK"); dashed ~72° rings mark
+  the approximate FOV so empty longitudes read as "no coverage", never "no
+  lightning". Both satellites' flashes render in the overlap zone (stereo
+  double-count) — kept, since dropping one satellite would blind the overlap
+  when the other fails (as now); noted here for honesty.
+- **Render**: same additive-splat idiom as fires, cold palette (violet-blue →
+  white by log energy). Age decay bakes into per-flash alpha at derive time
+  (payload refreshes ≤ 60 s, invisible error on a 60-min curve); the sharp
+  window edge and the <3-min "fresh bloom" tier run on the GPU filter, whose
+  age ranges slide with the wall clock between refetches (uniform updates via
+  the existing ~30 fps pulse ticker, zero rebuilds). Splats reuse the 25 km
+  anti-z-fighting lift.
+- **EUMETSAT MTG-LI deferred** (Europe/Africa extension): requires a free
+  registered key — the owner's manual step — and slots in as a third
+  "satellite" in server/glm.ts behind an `EUMETSAT_KEY` secret, same pattern
+  as `FIRMS_MAP_KEY`. Asia/W-Pacific has no legally usable free feed
+  (Blitzortung's rules restrict redistribution; commercial networks only) —
+  documented as a permanent gap, shown honestly by the coverage rings.
+- **Lightning filters/stats/timeline deferred**: the lightning globe ships
+  with HUD + legend only; per-globe filter panels and a minutes-scale
+  timeline are a later phase once the framework proves out.

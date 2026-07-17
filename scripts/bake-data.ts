@@ -14,6 +14,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici'
 import { fetchAndEncode, PUBLIC_FEEDS, WINDOW_DAYS, type FeedWindow } from '../server/firms'
+import { fetchLightningOnce } from '../server/glm'
 
 setGlobalDispatcher(new EnvHttpProxyAgent())
 
@@ -60,10 +61,31 @@ async function main() {
     }
   }
 
+  // Lightning (GOES GLM): one rolling-window payload, keyless. The window is
+  // fetched fresh each bake (~360 granules across two satellites, parallel).
+  let lightning: { file: string; count: number; fetchedAt: string } | null = null
+  if (process.env.SKIP_LIGHTNING !== '1') {
+    try {
+      const t0 = Date.now()
+      const { meta, bin } = await fetchLightningOnce()
+      await writeFile(join(OUT_DIR, 'lightning.bin'), bin)
+      lightning = { file: 'lightning.bin', count: meta.count, fetchedAt: meta.fetchedAt }
+      console.log(
+        `baked lightning.bin: ${meta.count.toLocaleString()} flashes ` +
+          `(backfill ${(meta.backfill * 100).toFixed(0)}%), ` +
+          `${(bin.byteLength / 1e6).toFixed(1)}MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+      )
+    } catch (err) {
+      failures.push(`lightning.bin: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+      console.error('FAILED lightning.bin:', err instanceof Error ? err.message.slice(0, 200) : err)
+    }
+  }
+
   const manifest = {
     generatedAt: new Date().toISOString(),
     hasKey: Boolean(MAP_KEY),
     files: baked,
+    lightning,
     failures,
   }
   await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))

@@ -3,10 +3,12 @@ import Map, { useControl } from 'react-map-gl/maplibre'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
-import type { DecodedFire, EonetEvent, FireData } from '../lib/types'
+import type { DecodedFire, EonetEvent, FireData, LightningData } from '../lib/types'
 import type { QualityConfig } from '../lib/quality'
 import { buildFireLayers } from '../lib/fireLayers'
+import { buildLightningLayers } from '../lib/lightningLayers'
 import { attachEonetInteraction, EONET_ICON_LAYER, syncEonetSymbols } from '../lib/eonetSymbols'
+import { syncGlmCoverage } from '../lib/coverage'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -87,6 +89,7 @@ function styleMapForSpace(map: MapLibreMap, projection: Projection) {
 export function EmberMap({
   data,
   full,
+  lightning,
   events,
   quality,
   selectedIndex,
@@ -97,6 +100,8 @@ export function EmberMap({
   data: FireData | undefined
   /** full decoded payload — picking/selection index space (matches stats) */
   full: DecodedFire | undefined
+  /** lightning render set (Phase 6), undefined until its globe is active */
+  lightning: LightningData | undefined
   events: EonetEvent[] | undefined
   quality: QualityConfig
   /** validated selection (App checks payload identity + active filters) */
@@ -124,6 +129,7 @@ export function EmberMap({
     [],
   )
 
+  const globe = useEmber((s) => s.globe)
   const frpMin = useEmber((s) => s.frpMin)
   const confMin = useEmber((s) => s.confMin)
   const dayNight = useEmber((s) => s.dayNight)
@@ -154,50 +160,61 @@ export function EmberMap({
     [full, selectedIndex],
   )
 
+  // Fire-specific dressing (event reticles, choropleth, perimeters, the
+  // selection ring) only exists on the fire globe; the terminator and the
+  // GLM coverage rings are shell/lightning concerns.
+  const fireGlobe = globe === 'fire'
+
   // Everything the style.load handler must restore after a basemap swap
   // (which wipes projection, sky, tint and all native layers), readable
   // without re-registering the handler.
   const styleStateRef = useRef({
     projection,
+    globe,
     events,
     selectedEventId,
-    showEvents,
+    showEvents: showEvents && fireGlobe,
     showTerminator,
-    selectedPoint,
+    selectedPoint: fireGlobe ? selectedPoint : null,
     choropleth,
-    showChoropleth,
+    showChoropleth: showChoropleth && fireGlobe,
     perimeters,
-    showPerimeters,
+    showPerimeters: showPerimeters && fireGlobe,
   })
   styleStateRef.current = {
     projection,
+    globe,
     events,
     selectedEventId,
-    showEvents,
+    showEvents: showEvents && fireGlobe,
     showTerminator,
-    selectedPoint,
+    selectedPoint: fireGlobe ? selectedPoint : null,
     choropleth,
-    showChoropleth,
+    showChoropleth: showChoropleth && fireGlobe,
     perimeters,
-    showPerimeters,
+    showPerimeters: showPerimeters && fireGlobe,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
-   *  terminator, perimeters, [deck fires], eonet symbols, selection ring). */
+   *  terminator, coverage rings, perimeters, [deck splats], eonet symbols,
+   *  selection ring). */
   const syncNativeLayers = (map: MapLibreMap) => {
     const s = styleStateRef.current
     // eonet first: its icon layer is the beforeId anchor for deck + the rest
     syncEonetSymbols(map, s.events ?? [], s.selectedEventId, s.showEvents)
     syncTerminatorLayers(map, { beforeId: EONET_ICON_LAYER, visible: s.showTerminator })
+    syncGlmCoverage(map, { beforeId: EONET_ICON_LAYER, visible: s.globe === 'lightning' })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
     syncSelectionMarker(map, s.selectedPoint)
   }
 
-  // Entrance: once the globe is up and data has arrived, ease down from orbit
-  // onto the North America home view while the fires ignite (§5.7).
+  // Entrance: once the globe is up and the ACTIVE globe's data has arrived,
+  // ease down from orbit onto the North America home view while the layers
+  // ignite (§5.7). Deep-linked ?globe=lightning must not wait on fire data.
+  const entranceReady = globe === 'lightning' ? Boolean(lightning) : Boolean(full)
   useEffect(() => {
-    if (!mapLoaded || !full || entranceStarted.current) return
+    if (!mapLoaded || !entranceReady || entranceStarted.current) return
     const map = mapRef.current?.getMap()
     if (!map) return
     entranceStarted.current = true
@@ -228,7 +245,7 @@ export function EmberMap({
       cancelFly()
       cancelAnimationFrame(raf)
     }
-  }, [mapLoaded, full, jump])
+  }, [mapLoaded, entranceReady, jump])
 
   // Idle auto-rotation, armed only after the entrance has settled.
   useEffect(() => {
@@ -268,6 +285,7 @@ export function EmberMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     mapLoaded,
+    globe,
     events,
     selectedEventId,
     showEvents,
@@ -304,8 +322,8 @@ export function EmberMap({
     )
   }, [mapLoaded])
 
-  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange })
-  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange }
+  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange, fireGlobe })
+  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange, fireGlobe }
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
@@ -313,6 +331,7 @@ export function EmberMap({
     const onClick = (e: MapMouseEvent) => {
       if (e.defaultPrevented) return // an EONET marker claimed this click
       const s = pickStateRef.current
+      if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
       if (!s.full) return
       const idx = findNearestHotspot(
         s.full,
@@ -365,25 +384,39 @@ export function EmberMap({
     }
   }, [mapLoaded])
 
-  const layers = useMemo(
-    () =>
-      data
-        ? buildFireLayers({
-            data,
+  const layers = useMemo(() => {
+    // splats render beneath the event reticles once those layers exist
+    const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
+    if (globe === 'lightning') {
+      return lightning
+        ? buildLightningLayers({
+            data: lightning,
             zoom,
             quality,
-            filters: { frpMin, confMin, dayNight },
-            timeRange,
-            showHeat,
-            showPoints,
+            // pulse ticks ~30fps, so the sliding age window follows the clock
+            nowSec: Date.now() / 1000,
             ignite,
             pulse,
-            // fires render beneath the event reticles once those layers exist
-            beforeId: mapLoaded ? EONET_ICON_LAYER : undefined,
+            beforeId,
           })
-        : [],
-    [data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, pulse, mapLoaded],
-  )
+        : []
+    }
+    return data
+      ? buildFireLayers({
+          data,
+          zoom,
+          quality,
+          filters: { frpMin, confMin, dayNight },
+          timeRange,
+          showHeat,
+          showPoints,
+          ignite,
+          pulse,
+          beforeId,
+        })
+      : []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globe, lightning, data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, pulse, mapLoaded])
 
   return (
     <Map

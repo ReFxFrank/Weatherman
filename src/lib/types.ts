@@ -52,6 +52,70 @@ export interface FireData {
 /** Decoded payload before render attributes are derived. */
 export type DecodedFire = Omit<FireData, 'colors' | 'radii' | 'filterValues'>
 
+// ---------------------------------------------------------------------------
+// Lightning (GOES GLM) — mirrors server/glm.ts wire format
+// ---------------------------------------------------------------------------
+
+export interface LightningSatMeta {
+  id: string
+  name: string
+  /** epoch seconds of the newest decoded granule, 0 if the satellite is dark */
+  lastGranuleSec: number
+  flashCount: number
+  /** granules listed but not yet fetched (server backfill in progress) */
+  pendingKeys: number
+}
+
+export interface LightningMeta {
+  source: 'glm'
+  windowMin: number
+  mode: 'live' | 'baked'
+  fetchedAt: string
+  count: number
+  sats: LightningSatMeta[]
+  /** 0..1 — fraction of the in-window granules the server has decoded */
+  backfill: number
+  stale?: boolean
+}
+
+export interface LightningBinarySection {
+  name: 'positions' | 'energy' | 'tsSec' | 'sat'
+  type: 'f32' | 'u32' | 'u8'
+  size: number
+  offset: number
+}
+
+export type LightningBinaryHeader = LightningMeta & {
+  dataOffset: number
+  sections: LightningBinarySection[]
+}
+
+/** Decoded lightning payload: parallel typed arrays, [lon, lat] positions. */
+export interface DecodedLightning {
+  meta: LightningMeta
+  count: number
+  /** [lon, lat] interleaved */
+  positions: Float32Array
+  /** flash optical energy, femtojoules */
+  energy: Float32Array
+  /** granule start, epoch seconds UTC (20 s quantization) */
+  tsSec: Uint32Array
+  /** satellite index (0 = GOES-West, 1 = GOES-East) */
+  sat: Uint8Array
+}
+
+/** Lightning render set: lifted positions + derived attributes. */
+export interface LightningData extends DecodedLightning {
+  /** [lon, lat, liftMeters] interleaved (same depth-fight fix as fires) */
+  positionsLifted: Float32Array
+  /** RGBA per flash — energy ramp, age-faded alpha (at derive time) */
+  colors: Uint8Array
+  /** meters, energy-scaled */
+  radii: Float32Array
+  /** [ageMinAtFetch, energyFJ, satIndex] per flash for the GPU filter */
+  filterValues: Float32Array
+}
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

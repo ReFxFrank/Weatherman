@@ -1,8 +1,11 @@
 import { FRP_STOPS } from '../lib/colors'
+import { lightningColor } from '../lib/lightningBinary'
+import type { GlobeId } from '../store'
 
 /**
- * Map legend (§5.6): the FRP ember ramp on a log scale plus the marker key.
- * Unpositioned — the caller supplies placement (and glass) via className.
+ * Map legend (§5.6): per-globe — the FRP ember ramp + marker key for fires,
+ * the energy ramp + coverage honesty for lightning. Unpositioned — the
+ * caller supplies placement (and glass) via className.
  */
 
 const MAX_STOP = FRP_STOPS[FRP_STOPS.length - 1].frp // 250
@@ -12,7 +15,63 @@ const RAMP_GRADIENT = `linear-gradient(90deg, ${FRP_STOPS.map(
   (s) => `rgb(${s.color[0]},${s.color[1]},${s.color[2]}) ${pct(s.frp).toFixed(1)}%`,
 ).join(', ')})`
 
-export function Legend({ className = 'w-60' }: { className?: string }) {
+const LIGHTNING_GRADIENT = `linear-gradient(90deg, ${[0, 0.25, 0.5, 0.75, 1]
+  .map((t) => {
+    const [r, g, b] = lightningColor(Math.pow(10, t * 3.5))
+    return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)}) ${t * 100}%`
+  })
+  .join(', ')})`
+
+function LightningLegend() {
+  return (
+    <>
+      <div className="h-2 rounded-sm" style={{ background: LIGHTNING_GRADIENT }} />
+      <div className="mt-0.5 flex justify-between font-mono text-[9px] text-slate-500">
+        <span>faint</span>
+        <span>strong</span>
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">flash optical energy · log scale</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, #ffffff 0%, #7dd3fc 55%, transparent 75%)',
+              boxShadow: '0 0 6px rgba(125,211,252,0.9)',
+            }}
+          />
+          <span className="text-[10px] text-slate-400">flash · sized &amp; colored by energy</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-3 w-3 shrink-0 rounded-full opacity-80"
+            style={{ background: '#bae6fd', filter: 'blur(3px)' }}
+          />
+          <span className="text-[10px] text-slate-400">bloom · struck in the last 3 min</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-0 w-3.5 shrink-0 border-t border-dashed border-sky-300/50" />
+          <span className="text-[10px] text-slate-400">≈ GOES satellite field of view</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          GOES GLM sees the Americas &amp; adjacent oceans — outside the rings means no
+          coverage, not no lightning. Strikes fade over 60 min.
+        </p>
+      </div>
+    </>
+  )
+}
+
+export function Legend({ className = 'w-60', globe = 'fire' }: { className?: string; globe?: GlobeId }) {
+  if (globe === 'lightning') {
+    return (
+      <div className={`${className} px-4 py-3`}>
+        <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>
+        <LightningLegend />
+      </div>
+    )
+  }
   return (
     <div className={`${className} px-4 py-3`}>
       <h3 className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-slate-500">LEGEND</h3>

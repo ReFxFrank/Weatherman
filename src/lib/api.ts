@@ -1,5 +1,6 @@
 import { decodeFireBinary } from './binary'
-import type { DecodedFire, EonetEvent } from './types'
+import { decodeLightningBinary } from './lightningBinary'
+import type { DecodedFire, DecodedLightning, EonetEvent } from './types'
 
 export const DEFAULT_SOURCE = 'VIIRS_NOAA20_NRT'
 
@@ -42,6 +43,28 @@ export async function fetchFireDecoded(source = DEFAULT_SOURCE, days = 1): Promi
     throw new Error(detail || `hotspots request failed (${res.status})`)
   }
   return decodeFireBinary(await res.arrayBuffer())
+}
+
+/**
+ * Lightning refresh: GLM granules land every 20 s and the proxy keeps a
+ * ~15 s payload cache, so live mode polls each minute. Baked mode (Pages)
+ * only changes when the cron redeploys — poll on the fire cadence.
+ */
+export const LIGHTNING_REFRESH_MS = STATIC_MODE ? REFRESH_MS : 60_000
+
+export async function fetchLightningDecoded(): Promise<DecodedLightning> {
+  const url = STATIC_MODE
+    ? `${import.meta.env.BASE_URL}data/lightning.bin?v=${Math.floor(Date.now() / LIGHTNING_REFRESH_MS)}`
+    : '/api/lightning'
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(
+      STATIC_MODE && res.status === 404
+        ? 'lightning not in the baked feed yet (next Pages deploy adds it)'
+        : `lightning request failed (${res.status})`,
+    )
+  }
+  return decodeLightningBinary(await res.arrayBuffer())
 }
 
 export interface HealthInfo {

@@ -46,7 +46,7 @@ export function decodeFireBinary(buf: ArrayBuffer): DecodedFire {
  * zoom). 25 km is 0.4% of Earth's radius: geometrically invisible, but far
  * beyond the mesh error, and far-side points stay correctly occluded.
  */
-const SPLAT_LIFT_M = 25_000
+export const SPLAT_LIFT_M = 25_000
 
 export function deriveRenderAttributes(d: DecodedFire, stride = 1): FireData {
   // The hottest fires must never be decimated away: the stats panel's top-5

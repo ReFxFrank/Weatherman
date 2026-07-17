@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
-import { fetchEonetEvents, fetchFireDecoded, fetchQuota, REFRESH_MS } from './lib/api'
+import {
+  fetchEonetEvents,
+  fetchFireDecoded,
+  fetchLightningDecoded,
+  fetchQuota,
+  LIGHTNING_REFRESH_MS,
+  REFRESH_MS,
+} from './lib/api'
 import { deriveRenderAttributes } from './lib/binary'
+import { deriveLightningAttributes } from './lib/lightningBinary'
 import { computeChoropleth } from './lib/choropleth'
 import { startDeepLinkSync } from './lib/deepLink'
 import { exportView } from './lib/exportView'
@@ -15,6 +23,7 @@ import { BottomSheet } from './components/BottomSheet'
 import { EmberMap } from './components/EmberMap'
 import { EventCard } from './components/EventCard'
 import { FilterPanel } from './components/FilterPanel'
+import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
 import { Legend } from './components/Legend'
 import { SearchBox } from './components/SearchBox'
@@ -29,6 +38,7 @@ const CARD_POS =
   'z-20 w-72 absolute lg:bottom-8 lg:right-4 max-lg:bottom-24 max-lg:left-1/2 max-lg:-translate-x-1/2'
 
 export default function App() {
+  const globe = useEmber((s) => s.globe)
   const source = useEmber((s) => s.source)
   const days = useEmber((s) => s.days)
   const tier = useEmber((s) => s.quality)
@@ -47,13 +57,35 @@ export default function App() {
   const fps = useFps(debug)
 
   // Refetch happens ONLY when source/days change (§5.3) — plus the §5.2
-  // auto-refresh tick, which swaps data in place without any reload.
+  // auto-refresh tick, which swaps data in place without any reload. Paused
+  // while another globe is up; cached data makes switching back instant.
   const { data: decoded, isLoading, isError, error, isPlaceholderData, dataUpdatedAt } = useQuery({
     queryKey: ['fire', source, days],
     queryFn: () => fetchFireDecoded(source, days),
     placeholderData: keepPreviousData,
     refetchInterval: REFRESH_MS,
+    enabled: globe === 'fire',
   })
+
+  // Lightning globe (Phase 6): GOES GLM rolling window via the proxy (live)
+  // or the baked lightning.bin (Pages). The first live responses are a
+  // partial window (meta.backfill < 1) that fills within a minute or two.
+  const {
+    data: lightningDecoded,
+    isLoading: lightningLoading,
+    isError: lightningError,
+    error: lightningErr,
+  } = useQuery({
+    queryKey: ['lightning'],
+    queryFn: fetchLightningDecoded,
+    placeholderData: keepPreviousData,
+    refetchInterval: LIGHTNING_REFRESH_MS,
+    enabled: globe === 'lightning',
+  })
+  const lightningData = useMemo(
+    () => (lightningDecoded ? deriveLightningAttributes(lightningDecoded) : undefined),
+    [lightningDecoded],
+  )
 
   // EONET named events — keyless + CORS-friendly, fetched straight from the
   // client (§3.2), refreshed on the same cadence.
@@ -136,12 +168,14 @@ export default function App() {
   const qHi = playing ? Math.round(timeRange[1] * 4) / 4 : timeRange[1]
   const stats = useMemo(
     () =>
-      decoded
+      // viewEpoch bumps on every camera settle — don't run the full-array
+      // pass for a globe that isn't on screen
+      globe === 'fire' && decoded
         ? computeFireStats(decoded, { frpMin, confMin, dayNight }, [qLo, qHi], mapBus.getBounds?.() ?? null)
         : null,
     // viewEpoch pulls fresh bounds after the camera settles
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [decoded, frpMin, confMin, dayNight, qLo, qHi, viewEpoch],
+    [globe, decoded, frpMin, confMin, dayNight, qLo, qHi, viewEpoch],
   )
 
   const shownCount = stats?.shownTotal ?? 0
@@ -180,7 +214,7 @@ export default function App() {
   // Country choropleth (Phase 5): recompute when on and inputs change.
   const [choropleth, setChoropleth] = useState<GeoJSON.FeatureCollection | null>(null)
   useEffect(() => {
-    if (!showChoropleth || !decoded) {
+    if (!showChoropleth || !decoded || globe !== 'fire') {
       setChoropleth(null)
       return
     }
@@ -191,7 +225,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [showChoropleth, decoded, frpMin, confMin, dayNight, qLo, qHi])
+  }, [showChoropleth, decoded, frpMin, confMin, dayNight, qLo, qHi, globe])
 
   // Shareable deep links (Phase 5): keep the URL in sync with the view.
   useEffect(() => startDeepLinkSync(), [])
@@ -214,6 +248,7 @@ export default function App() {
       <EmberMap
         data={data}
         full={decoded}
+        lightning={globe === 'lightning' ? lightningData : undefined}
         events={events}
         quality={quality}
         selectedIndex={validSelection}
@@ -221,48 +256,63 @@ export default function App() {
         perimeters={showPerimeters ? (perimeters ?? null) : null}
       />
       <SearchBox onNavigate={navigateTo} />
-      <FilterPanel eventsCount={events?.length} />
-      <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} onExport={onExport} />
-      <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />
+      {/* fire-globe control surfaces (filters/stats/timeline operate on FIRMS
+          semantics; lightning grows its own in a later phase) */}
+      {globe === 'fire' && <FilterPanel eventsCount={events?.length} />}
+      {globe === 'fire' && (
+        <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} onExport={onExport} />
+      )}
+      {globe === 'fire' && <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />}
 
       {/* bottom-right slot: detail card wins, legend otherwise */}
-      {decoded && validSelection !== null ? (
+      {globe === 'fire' && decoded && validSelection !== null ? (
         <HotspotCard
           data={decoded}
           index={validSelection}
           onClose={() => setEmber({ selectedHotspot: null })}
           className={CARD_POS}
         />
-      ) : selectedEventId ? (
+      ) : globe === 'fire' && selectedEventId ? (
         <EventCard events={events} className={CARD_POS} />
       ) : (
-        <Legend className={`absolute bottom-8 right-4 z-0 hidden w-60 lg:block ${glass}`} />
+        <Legend
+          globe={globe}
+          className={`absolute bottom-8 right-4 z-0 hidden w-60 lg:block ${glass}`}
+        />
       )}
 
-      <BottomSheet
-        eventsCount={events?.length}
-        stats={stats}
-        newSince={newSince}
-        onJumpTo={jumpToFire}
-        onExport={onExport}
-      />
+      {globe === 'fire' && (
+        <BottomSheet
+          eventsCount={events?.length}
+          stats={stats}
+          newSince={newSince}
+          onJumpTo={jumpToFire}
+          onExport={onExport}
+        />
+      )}
 
       {/* status chips: error / stale / empty (§5.6 graceful states) */}
       <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex max-w-[92vw] -translate-x-1/2 flex-col items-center gap-2">
-        {isError && (
+        {globe === 'lightning' && lightningError && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
+            <CloudOff className="h-3.5 w-3.5 shrink-0" />
+            Lightning feed unreachable — retrying automatically
+          </div>
+        )}
+        {globe === 'fire' && isError && (
           <div className={`pointer-events-auto flex items-center gap-2 border-red-500/30 px-3 py-2 text-[11px] text-red-300 ${glass}`}>
             <CloudOff className="h-3.5 w-3.5 shrink-0" />
             {quotaLike ? 'FIRMS quota reached — retrying automatically' : 'Satellite feed unreachable — retrying automatically'}
           </div>
         )}
-        {!isError && data?.meta.stale && (
+        {globe === 'fire' && !isError && data?.meta.stale && (
           <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
             <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
             Upstream unreachable — showing cached data from{' '}
             {new Date(data.meta.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
-        {!isError && data && shownCount === 0 && !isLoading && (
+        {globe === 'fire' && !isError && data && shownCount === 0 && !isLoading && (
           <div className={`pointer-events-auto flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
             No detections match the current filters
             {filtersActive && (
@@ -289,28 +339,76 @@ export default function App() {
         </div>
         <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-slate-400 max-sm:text-[10px]">
           <Satellite className="h-3 w-3 shrink-0 text-slate-500" />
-          {isLoading && <span className="animate-pulse text-slate-300">ACQUIRING SATELLITE FEED…</span>}
-          {isError && (
-            <span className="text-red-400">
-              FEED ERROR — {error instanceof Error ? error.message.slice(0, 60) : 'unknown'}
-            </span>
-          )}
-          {data && !isError && (
-            <span className={isPlaceholderData ? 'opacity-50' : ''}>
-              {/* headline = detections actually shown (time window + filters);
-                  the raw feed also carries older-ingest rows the window hides */}
-              <span className="text-amber-300">{shownCount.toLocaleString()}</span>
-              {filtersActive && (
-                <span className="text-slate-500"> of {data.meta.count.toLocaleString()}</span>
-              )}{' '}
-              detections · last {Math.min(days, data.meta.coverageDays) * 24}h ·{' '}
-              <span className="max-sm:hidden">{sourceLabel} · </span>
-              {data.meta.mode === 'api' ? 'area API' : 'public feed'}
-              {data.meta.stale ? ' · STALE' : ''}
-              {isPlaceholderData ? ' · switching…' : ''}
-            </span>
+          {globe === 'fire' ? (
+            <>
+              {isLoading && <span className="animate-pulse text-slate-300">ACQUIRING SATELLITE FEED…</span>}
+              {isError && (
+                <span className="text-red-400">
+                  FEED ERROR — {error instanceof Error ? error.message.slice(0, 60) : 'unknown'}
+                </span>
+              )}
+              {data && !isError && (
+                <span className={isPlaceholderData ? 'opacity-50' : ''}>
+                  {/* headline = detections actually shown (time window + filters);
+                      the raw feed also carries older-ingest rows the window hides */}
+                  <span className="text-amber-300">{shownCount.toLocaleString()}</span>
+                  {filtersActive && (
+                    <span className="text-slate-500"> of {data.meta.count.toLocaleString()}</span>
+                  )}{' '}
+                  detections · last {Math.min(days, data.meta.coverageDays) * 24}h ·{' '}
+                  <span className="max-sm:hidden">{sourceLabel} · </span>
+                  {data.meta.mode === 'api' ? 'area API' : 'public feed'}
+                  {data.meta.stale ? ' · STALE' : ''}
+                  {isPlaceholderData ? ' · switching…' : ''}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              {lightningLoading && (
+                <span className="animate-pulse text-slate-300">ACQUIRING LIGHTNING FEED…</span>
+              )}
+              {lightningError && (
+                <span className="text-red-400">
+                  FEED ERROR — {lightningErr instanceof Error ? lightningErr.message.slice(0, 60) : 'unknown'}
+                </span>
+              )}
+              {lightningDecoded && !lightningError && (
+                <span>
+                  <span className="text-sky-300">{lightningDecoded.count.toLocaleString()}</span>{' '}
+                  flashes · last {lightningDecoded.meta.windowMin} min · GOES GLM
+                  {lightningDecoded.meta.backfill < 0.98 &&
+                    ` · filling ${Math.round(lightningDecoded.meta.backfill * 100)}%`}
+                </span>
+              )}
+            </>
           )}
         </div>
+        {globe === 'lightning' && lightningDecoded && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            {lightningDecoded.meta.sats.map((s, i) => {
+              const label = s.name.replace('GOES-', '')
+              if (!s.lastGranuleSec)
+                return (
+                  <span key={s.id}>
+                    {i > 0 && ' · '}
+                    {label} <span className="text-red-400/90">DARK</span>
+                  </span>
+                )
+              const lagMin = Math.max(0, Date.now() / 1000 - s.lastGranuleSec) / 60
+              return (
+                <span key={s.id}>
+                  {i > 0 && ' · '}
+                  {label}{' '}
+                  <span className={lagMin > 15 ? 'text-amber-400/90' : 'text-sky-400/90'}>
+                    {lagMin > 15 ? `${Math.round(lagMin)}m behind` : `live ${lagMin < 1 ? '<1' : Math.round(lagMin)}m`}
+                  </span>
+                </span>
+              )
+            })}
+          </div>
+        )}
+        <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
             {fps} fps · {quality.tier} · rendering {data ? data.count.toLocaleString() : 0}
@@ -324,8 +422,8 @@ export default function App() {
       <footer
         className={`absolute bottom-1 left-2 z-0 px-2 py-1 text-[9px] tracking-wide text-slate-600 ${glass}`}
       >
-        Active fire data: NASA FIRMS (MODIS/VIIRS) · Named events: NASA EONET · Boundaries:
-        Natural Earth · US perimeters: NIFC
+        Active fire data: NASA FIRMS (MODIS/VIIRS) · Lightning: NOAA GOES GLM · Named events:
+        NASA EONET · Boundaries: Natural Earth · US perimeters: NIFC
       </footer>
     </div>
   )

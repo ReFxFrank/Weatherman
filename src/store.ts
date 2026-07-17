@@ -20,8 +20,12 @@ export type SourceId = (typeof SOURCES)[number]['id']
 export type DayNight = 'all' | 'day' | 'night'
 export type Projection = 'globe' | 'mercator'
 export type Basemap = 'dark' | 'dark-nolabels'
+/** Which data globe is on screen (Phase 6): fire watch or lightning. */
+export type GlobeId = 'fire' | 'lightning'
 
 export interface EmberState {
+  /** active globe — the shell (camera, terminator, search) is shared */
+  globe: GlobeId
   source: SourceId
   /** fetched day window 1–10 (§5.2 time-range slider) */
   days: number
@@ -76,10 +80,12 @@ function stateFromUrl(): Partial<EmberState> {
   if (conf === '1' || conf === '2') out.confMin = Number(conf) as 1 | 2
   const dn = q.get('dn')
   if (dn === 'day' || dn === 'night') out.dayNight = dn
+  if (q.get('globe') === 'lightning') out.globe = 'lightning'
   return out
 }
 
 export const useEmber = create<EmberState>(() => ({
+  globe: 'fire',
   source: 'VIIRS_NOAA20_NRT',
   days: 1,
   frpMin: 0,
@@ -110,6 +116,10 @@ export function setEmber(partial: Partial<EmberState>) {
   // Changing the fetch window invalidates any slice position within it.
   if (partial.days !== undefined) {
     partial = { playhead: null, playing: false, ...partial }
+  }
+  // Selections and sheets belong to the globe they were made on.
+  if (partial.globe !== undefined) {
+    partial = { selectedHotspot: null, selectedEventId: null, sheet: null, ...partial }
   }
   useEmber.setState(partial)
 }

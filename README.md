@@ -1,8 +1,8 @@
 # Ember 🔥🌍
 
-**Live global wildfire monitoring map** — a dark, rotating Earth in space, covered in glowing
-near-real-time fire detections from NASA satellites. Mission-control aesthetics, GPU rendering,
-real data only.
+**Live hazard globes** — a dark, rotating Earth in space with selectable data globes: glowing
+near-real-time fire detections from NASA satellites, and live lightning from NOAA's GOES
+Geostationary Lightning Mappers. Mission-control aesthetics, GPU rendering, real data only.
 
 > Build spec: [`docs/BRIEF.md`](docs/BRIEF.md) · Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
@@ -16,6 +16,7 @@ real data only.
 | **3 — Time & named events** | 1–10d window + histogram timeline + day-by-day playback (GPU age filter), EONET named events with detail cards, 10-min auto-refresh | ✅ done |
 | **4 — Panels, detail, polish** | live stats panel, hotspot detail cards + selection ring, real-time terminator with twilight bands, legend, Photon search, top-FRP pulse, error/empty/stale states, mobile bottom sheet | ✅ done |
 | **5 — Stretch** | shareable deep links, CSV/GeoJSON export of the current view, country fire-count choropleth (Natural Earth), US perimeters (NIFC/WFIGS) | ✅ done (EU perimeters + Tauri deferred, see DECISIONS) |
+| **6 — Multi-globe: lightning** | globe switcher framework (`?globe=`), live GOES GLM lightning (20-second granules, keyless public S3), rolling 60-min window with fresh-strike blooms, per-satellite freshness HUD, coverage-honesty rings | ✅ done (EUMETSAT Europe/Africa extension awaits a free key, see DECISIONS) |
 
 ## Stack
 
@@ -116,13 +117,15 @@ unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 ### Deep links & dev params
 
 The URL mirrors the view — copy the address bar to share it:
-`?lat=&lon=&z=` camera (skips the entrance) · `?source=` · `?days=1..10` ·
-`?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
+`?globe=lightning` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
+`?source=` · `?days=1..10` · `?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
 
 Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
 `?stride=N` decimate points · `?debug=1` FPS/quota/render counts in the HUD.
 
 ## Data attribution
 
-Active fire data: **NASA FIRMS** (MODIS/VIIRS) · Named events: **NASA EONET** ·
-Basemap: © [CARTO](https://carto.com/attributions), © OpenStreetMap contributors.
+Active fire data: **NASA FIRMS** (MODIS/VIIRS) · Lightning: **NOAA GOES GLM**
+(Geostationary Lightning Mapper, via the NOAA Open Data Dissemination S3 buckets) ·
+Named events: **NASA EONET** · Basemap: © [CARTO](https://carto.com/attributions),
+© OpenStreetMap contributors.

@@ -22,8 +22,9 @@ import type { DayNight } from '../store'
  * is a uniform update, never an attribute rebuild or refetch.
  */
 
-/** Additive light blending: fire accumulates brightness over the dark earth. */
-const ADDITIVE_BLEND = {
+/** Additive light blending: fire accumulates brightness over the dark earth.
+ *  (Shared with the lightning layers — same "light on a dark planet" idiom.) */
+export const ADDITIVE_BLEND = {
   blendColorOperation: 'add',
   blendColorSrcFactor: 'src-alpha',
   blendColorDstFactor: 'one',
@@ -40,7 +41,7 @@ const ADDITIVE_BLEND = {
  * can't be on screen, and large billboard splats would intersect the curved
  * surface's depth and clip into crescents — so release the test there.
  */
-const DEPTH_RELEASE_ZOOM = 4.5
+export const DEPTH_RELEASE_ZOOM = 4.5
 
 /** One shared extension instance: [frp, conf, night, ageDays] per point. */
 const FILTER_EXTENSIONS = [new DataFilterExtension({ filterSize: 4 })]

@@ -21,6 +21,7 @@ function syncUrl() {
   q.set('z', cam.zoom.toFixed(2))
   const setOrDelete = (key: string, value: string | null) =>
     value === null ? q.delete(key) : q.set(key, value)
+  setOrDelete('globe', s.globe === 'fire' ? null : s.globe)
   setOrDelete('source', s.source === DEFAULTS.source ? null : s.source)
   setOrDelete('days', s.days === DEFAULTS.days ? null : String(s.days))
   setOrDelete('frp', s.frpMin > 0 ? s.frpMin.toFixed(1) : null)
