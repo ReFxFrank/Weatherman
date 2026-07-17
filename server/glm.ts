@@ -539,7 +539,12 @@ export function getLightningPayload(): { meta: LightningMeta; bin: Uint8Array } 
  * shot — no budget, no background loop — and return the encoded payload.
  */
 export async function fetchLightningOnce(): Promise<{ meta: LightningMeta; bin: Uint8Array }> {
+  // At least two rounds ALWAYS: a transient listing timeout on round one
+  // (observed from Actions runners against EUMETSAT) must get a retry in a
+  // one-shot bake — failed listings don't count toward the backlog.
   let backlog = await ingestCycle(1000)
-  for (let round = 0; backlog > 0 && round < 5; round++) backlog = await ingestCycle(1000)
+  for (let round = 0; (backlog > 0 || round < 1) && round < 5; round++) {
+    backlog = await ingestCycle(1000)
+  }
   return buildPayload('baked')
 }

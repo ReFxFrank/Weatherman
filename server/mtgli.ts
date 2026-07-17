@@ -104,13 +104,20 @@ async function listProducts(nowSec: number, windowMin: number): Promise<string[]
       `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/times/${String(d.getUTCHours()).padStart(2, '0')}`,
     )
   }
+  // parallel + generous timeout: the browse API has been observed to take
+  // >30 s from GitHub Actions runners (fast from elsewhere), and a one-shot
+  // bake only gets a couple of retry rounds
   const uniq = [...new Set(hours)].slice(-3)
+  const pages = await Promise.all(
+    uniq.map(async (h) => {
+      const url = `${API}/data/browse/1.0.0/collections/${encodeURIComponent(COLLECTION)}/dates/${h}/products?format=json`
+      const res = await fetch(url, { signal: AbortSignal.timeout(45_000) })
+      if (!res.ok) throw new Error(`EUMETSAT browse ${res.status}`)
+      return (await res.json()) as { products?: Array<{ id?: string } | string> }
+    }),
+  )
   const ids: string[] = []
-  for (const h of uniq) {
-    const url = `${API}/data/browse/1.0.0/collections/${encodeURIComponent(COLLECTION)}/dates/${h}/products?format=json`
-    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) throw new Error(`EUMETSAT browse ${res.status}`)
-    const j = (await res.json()) as { products?: Array<{ id?: string } | string> }
+  for (const j of pages) {
     for (const p of j.products ?? []) {
       const id = typeof p === 'string' ? p : p.id
       if (id) ids.push(id)
