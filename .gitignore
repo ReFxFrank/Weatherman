@@ -11,3 +11,4 @@ dist/
 # editor / os noise
 .DS_Store
 *.log
+*.nc
