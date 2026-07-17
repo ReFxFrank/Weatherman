@@ -311,7 +311,13 @@ for debugging.
   — no UI shows the number with units. Coverage rings and HUD freshness
   chips are satellite-generic (per-sat lonSubSat + cadence in the header;
   "behind" thresholds are cadence-relative: a 12-min-old MTG product is
-  normal, a 12-min-old GLM granule is not). Asia/W-Pacific still has no
+  normal, a 12-min-old GLM granule is not; baked snapshots measure
+  freshness at bake time, since the headline already anchors the snapshot).
+  **Intensity calibration, measured from the first real cross-satellite
+  payload** (69,555 flashes, 2026-07-17 03:38Z): GLM fJ p50/p95 = 61/757,
+  MTG radiance p50/p95 = 121/2,494 — same order of magnitude on the log
+  ramp, MTG blooming slightly hotter. LI_INTENSITY_SCALE stays 1.
+  Asia/W-Pacific still has no
   legally usable free feed (Blitzortung's rules restrict redistribution;
   commercial networks only) — a permanent gap, shown honestly by the rings.
 - **Lightning filters/stats/timeline deferred**: the lightning globe ships

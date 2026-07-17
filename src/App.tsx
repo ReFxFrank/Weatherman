@@ -407,6 +407,15 @@ export default function App() {
         {globe === 'lightning' && lightningDecoded && (
           <div className="mt-1 font-mono text-[10px] text-slate-500">
             {lightningDecoded.meta.sats.map((s, i) => {
+              // live payloads: freshness vs the wall clock. Baked payloads:
+              // freshness AT BAKE TIME — the headline already anchors the
+              // snapshot ("60 min to HH:MMZ"); blaming satellites for the
+              // snapshot's age would misattribute it ("West 18m behind"
+              // while West was <1m fresh when baked).
+              const baseSec =
+                lightningDecoded.meta.mode === 'live'
+                  ? Date.now() / 1000
+                  : Date.parse(lightningDecoded.meta.fetchedAt) / 1000 || Date.now() / 1000
               const label = s.id.startsWith('MTI') ? 'MTG' : s.name.replace('GOES-', '')
               // "behind" is cadence-relative: GLM lands every 20 s, Meteosat
               // products every 10 min — a 12-minute-old MTG product is normal
@@ -426,7 +435,7 @@ export default function App() {
                     )}
                   </span>
                 )
-              const lagMin = Math.max(0, Date.now() / 1000 - s.lastGranuleSec) / 60
+              const lagMin = Math.max(0, baseSec - s.lastGranuleSec) / 60
               return (
                 <span key={s.id}>
                   {i > 0 && ' · '}
