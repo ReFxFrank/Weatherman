@@ -135,7 +135,7 @@ async function main() {
 
   // Lightning (GOES GLM): one rolling-window payload, keyless. The window is
   // fetched fresh each bake (~360 granules across two satellites, parallel).
-  let lightning: { file: string; count: number; fetchedAt: string } | null = null
+  let lightning: { file: string; count: number; fetchedAt: string; reused?: boolean } | null = null
   if (process.env.SKIP_LIGHTNING !== '1') {
     try {
       const t0 = Date.now()
@@ -155,8 +155,21 @@ async function main() {
           `${(bin.byteLength / 1e6).toFixed(1)}MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
       )
     } catch (err) {
-      failures.push(`lightning.bin: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
-      console.error('FAILED lightning.bin:', err instanceof Error ? err.message.slice(0, 200) : err)
+      // Same reuse-previous fallback as the fire bins: an S3/GLM outage
+      // must not strip lightning from the site. The reused window's
+      // fetchedAt is old, which the client renders honestly (baked windows
+      // freeze at bake time: "60 min to HH:MMZ").
+      const prev = await reusePrevious('lightning.bin')
+      if (prev) {
+        await writeFile(join(OUT_DIR, 'lightning.bin'), prev.bytes)
+        lightning = { file: 'lightning.bin', count: prev.count, fetchedAt: prev.fetchedAt, reused: true }
+        console.warn(
+          `REUSED previous lightning.bin (${prev.count.toLocaleString()} flashes from ${prev.fetchedAt}) — upstream: ${err instanceof Error ? err.message.slice(0, 120) : err}`,
+        )
+      } else {
+        failures.push(`lightning.bin: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+        console.error('FAILED lightning.bin:', err instanceof Error ? err.message.slice(0, 200) : err)
+      }
     }
   }
 

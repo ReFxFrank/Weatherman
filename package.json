@@ -7,10 +7,11 @@
   "scripts": {
     "dev": "concurrently -n server,client -c yellow,cyan \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "start": "tsx server/index.ts",
+    "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "bake": "tsx --env-file-if-exists=.env scripts/bake-data.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -45,6 +46,7 @@
     "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^9.0.0",
+    "playwright-core": "^1.61.1",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
