@@ -1,10 +1,12 @@
 import { decodeFireBinary } from './binary'
 import { decodeLightningBinary } from './lightningBinary'
 import type {
+  Aircraft,
   AuroraPayload,
   DecodedFire,
   DecodedLightning,
   EonetEvent,
+  FlightsData,
   HurricanePayload,
   Quake,
   QuakePayload,
@@ -277,6 +279,103 @@ export async function fetchAurora(): Promise<AuroraPayload> {
     points,
     peakProb,
     count: points.length,
+  }
+}
+
+/**
+ * Live aircraft — airplanes.live community ADS-B, keyless + CORS-open,
+ * NON-COMMERCIAL. Served per point+radius (≤ 250 nm), so this globe follows
+ * the current view (regional) rather than the whole planet. Client-direct in
+ * both deploy modes; positions are seconds old. Blank areas mean no receiver
+ * coverage, not no traffic. 1 req/s upstream limit → poll gently.
+ */
+export const FLIGHTS_REFRESH_MS = 6_000
+/** below this zoom a single 250 nm query covers too little of the view to be
+ *  worth loading — prompt the user to zoom in instead */
+export const FLIGHTS_MIN_ZOOM = 4.5
+/** airplanes.live hard cap on the point-query radius */
+export const FLIGHTS_MAX_RADIUS_NM = 250
+
+interface RawAircraft {
+  hex?: string
+  flight?: string
+  lat?: number
+  lon?: number
+  alt_baro?: number | 'ground'
+  alt_geom?: number
+  track?: number
+  gs?: number
+  ias?: number
+  tas?: number
+  mach?: number
+  baro_rate?: number
+  geom_rate?: number
+  squawk?: string
+  emergency?: string
+  category?: string
+  t?: string
+  r?: string
+  desc?: string
+  ownOp?: string
+  year?: string | number
+  dbFlags?: number
+  nav_altitude_mcp?: number
+  seen?: number
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const EMERGENCY_SQUAWKS = new Set(['7500', '7600', '7700'])
+
+export async function fetchAircraft(lat: number, lon: number, radiusNm: number): Promise<FlightsData> {
+  const r = Math.min(FLIGHTS_MAX_RADIUS_NM, Math.max(1, Math.round(radiusNm)))
+  const url = `https://api.airplanes.live/v2/point/${lat.toFixed(3)}/${lon.toFixed(3)}/${r}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`live aircraft feed failed (${res.status})`)
+  const raw = (await res.json()) as { ac?: RawAircraft[] }
+  const aircraft: Aircraft[] = []
+  for (const a of raw.ac ?? []) {
+    if (!Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue
+    const onGround = a.alt_baro === 'ground'
+    const squawk = (a.squawk ?? '').trim()
+    const emergency = (a.emergency ?? '').trim()
+    const flags = typeof a.dbFlags === 'number' ? a.dbFlags : 0
+    aircraft.push({
+      hex: a.hex ?? `${a.lat},${a.lon}`,
+      flight: (a.flight ?? '').trim(),
+      lat: a.lat as number,
+      lon: a.lon as number,
+      altFt: typeof a.alt_baro === 'number' ? a.alt_baro : null,
+      altGeomFt: num(a.alt_geom),
+      track: num(a.track),
+      gsKt: num(a.gs),
+      iasKt: num(a.ias),
+      tasKt: num(a.tas),
+      mach: num(a.mach),
+      // baro rate preferred; fall back to geometric rate when absent
+      baroRateFpm: num(a.baro_rate) ?? num(a.geom_rate),
+      squawk,
+      emergency,
+      category: (a.category ?? '').trim(),
+      type: a.t ?? '',
+      reg: (a.r ?? '').trim(),
+      desc: a.desc ?? '',
+      operator: (a.ownOp ?? '').trim(),
+      year: a.year != null ? String(a.year) : '',
+      military: (flags & 1) !== 0,
+      interesting: (flags & 2) !== 0,
+      navAltFt: num(a.nav_altitude_mcp),
+      seenSec: num(a.seen),
+      onGround,
+      isEmergency: (emergency !== '' && emergency !== 'none') || EMERGENCY_SQUAWKS.has(squawk),
+    })
+  }
+  return {
+    source: 'airplanes-live',
+    fetchedAt: new Date().toISOString(),
+    center: [lon, lat],
+    radiusNm: r,
+    aircraft,
+    count: aircraft.length,
   }
 }
 

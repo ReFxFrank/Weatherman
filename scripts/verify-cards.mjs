@@ -78,7 +78,7 @@ async function clickAt(page, lon, lat, zoom, storeKey) {
     ([ln, lt, z]) => window.__emberMap.jumpTo({ center: [ln, lt], zoom: z }),
     [lon, lat, zoom],
   )
-  await page.waitForTimeout(2000) // let tiles/layers render at the new camera
+  await page.waitForTimeout(2800) // let tiles/layers render at the new camera
   const pt = await page.evaluate(([ln, lt]) => {
     const p = window.__emberMap.project([ln, lt])
     return { x: p.x, y: p.y }
@@ -245,7 +245,11 @@ console.log('QUAKES globe — earthquake card')
     }, undefined, 20_000)
     if (!q) skip('no quakes in the feed to click (should never happen for all_day)')
     else {
-      const sel = await clickAt(page, q.lon, q.lat, 4, 'selectedQuake')
+      // small target under software rendering — retry the jump+click
+      let sel = null
+      for (let attempt = 0; attempt < 3 && !sel?.id; attempt++) {
+        sel = await clickAt(page, q.lon, q.lat, 4, 'selectedQuake')
+      }
       if (sel?.id) {
         const t = await page.evaluate(() => document.body.innerText)
         if (/EARTHQUAKE/.test(t) && /M\d/.test(t)) {
@@ -253,6 +257,59 @@ console.log('QUAKES globe — earthquake card')
           await page.screenshot({ path: 'verify-quake-card.png' })
         } else fail('quake selected but card text missing')
       } else fail(`quake click selected ${JSON.stringify(sel)}`)
+    }
+  }
+  await page.close()
+}
+
+// ---------------------------------------------------------------------------
+console.log('FLIGHTS globe — aircraft card (viewport-follow)')
+{
+  const page = await newPage({ width: 1280, height: 800 })
+  await page.goto(`${base}/?globe=flights&quality=performance&lat=51&lon=5&z=6`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  })
+  const ready = await waitFor(page, () => {
+    const map = window.__emberMap
+    if (!map || !map.getSource('flt-aircraft')) return false
+    return /aircraft|ZOOM IN/.test(document.body.innerText)
+  })
+  if (!ready) fail('flights globe did not boot')
+  else {
+    // find a rendered plane; do NOT jump the camera (that would change the
+    // follow-window and refetch a different set) — project at the current view
+    const plane = await waitFor(page, () => {
+      const feats = window.__emberMap.querySourceFeatures('flt-aircraft')
+      const f = feats[0]
+      if (!f) return null
+      const p = window.__emberMap.project(f.geometry.coordinates)
+      return { x: p.x, y: p.y, hex: f.properties.hex }
+    }, undefined, 20_000)
+    if (!plane) skip('no aircraft in view to click (no receiver coverage right now)')
+    else {
+      // planes move + refetch every 6 s, so re-find and retry a few times
+      let sel = null
+      for (let attempt = 0; attempt < 4 && !sel?.hex; attempt++) {
+        const p = await page.evaluate(() => {
+          const feats = window.__emberMap.querySourceFeatures('flt-aircraft')
+          const f = feats[0]
+          if (!f) return null
+          const pt = window.__emberMap.project(f.geometry.coordinates)
+          return { x: pt.x, y: pt.y }
+        })
+        if (!p) break
+        await page.mouse.click(p.x, p.y)
+        await page.waitForTimeout(500)
+        sel = await page.evaluate(() => window.__emberStore.getState().selectedAircraft)
+      }
+      if (sel?.hex) {
+        const t = await page.evaluate(() => document.body.innerText)
+        if (/ICAO hex|ground speed|ft/.test(t)) {
+          ok(`clicked aircraft → flight card rendered`)
+          await page.screenshot({ path: 'verify-flight-card.png' })
+        } else fail('aircraft selected but card text missing')
+      } else fail('aircraft click selected nothing (planes move — may be transient)')
     }
   }
   await page.close()

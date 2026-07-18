@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { isGlobeId, type GlobeId } from './lib/globes'
 import type { QualityTier } from './lib/quality'
 import { detectQualityTier } from './lib/quality'
-import type { HurricaneSelection, QuakeSelection, SevereSelection } from './lib/types'
+import type { AircraftSelection, HurricaneSelection, QuakeSelection, SevereSelection } from './lib/types'
 
 /**
  * UI state (§5.3): filters apply as GPU uniform updates — only `source` and
@@ -64,6 +64,8 @@ export interface EmberState {
   selectedHurricane: HurricaneSelection | null
   /** clicked earthquake whose card is open */
   selectedQuake: QuakeSelection | null
+  /** clicked aircraft whose card is open */
+  selectedAircraft: AircraftSelection | null
   /** right-hand stats panel expanded (§5.4) */
   statsOpen: boolean
   /** real-time day/night terminator shading (§5.7) */
@@ -118,6 +120,7 @@ export const useEmber = create<EmberState>(() => ({
   selectedSevere: null,
   selectedHurricane: null,
   selectedQuake: null,
+  selectedAircraft: null,
   statsOpen: true,
   showTerminator: true,
   sheet: null,
@@ -139,6 +142,7 @@ export function setEmber(partial: Partial<EmberState>) {
       selectedSevere: null,
       selectedHurricane: null,
       selectedQuake: null,
+      selectedAircraft: null,
       sheet: null,
       ...partial,
     }

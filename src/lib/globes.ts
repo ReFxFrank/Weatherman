@@ -1,4 +1,4 @@
-import { Activity, Flame, Shell, Sparkles, Tornado, Zap, type LucideIcon } from 'lucide-react'
+import { Activity, Flame, Plane, Shell, Sparkles, Tornado, Zap, type LucideIcon } from 'lucide-react'
 
 /**
  * THE globe registry — the single source of truth for which data globes
@@ -72,6 +72,14 @@ export const GLOBE_DEFS = [
     activeCls: 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300',
     feedName: 'OVATION FEED',
     attribution: 'Aurora: NOAA SWPC (OVATION)',
+  },
+  {
+    id: 'flights',
+    label: 'FLIGHTS',
+    Icon: Plane,
+    activeCls: 'border-indigo-400/40 bg-indigo-400/15 text-indigo-300',
+    feedName: 'ADS-B FEED',
+    attribution: 'Live aircraft: airplanes.live (non-commercial)',
   },
 ] as const satisfies readonly GlobeDef[]
 

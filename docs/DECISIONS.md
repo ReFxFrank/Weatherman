@@ -667,3 +667,83 @@ The sixth globe — the "gorgeous on the night side we already draw" pick.
   can be genuinely faint during low geomagnetic activity — `count === 0` above
   the threshold is a legitimate "aurora unlikely right now" chip, not a
   degraded/error state. `headless-check.mjs` gained the `aur-` layer prefix.
+
+
+## Phase 12 notes — the live-flights globe (airplanes.live)
+
+Frank asked for a FlightRadar-style airspace view. A feasibility research
+pass (see the openQuestions it raised, resolved by Frank) settled the source
+and framing; the decisions: **airplanes.live** for live aircraft (Frank
+confirmed Ember is permanently non-commercial), plus a future openAIP
+airspace/FIR layer.
+
+- **Why airplanes.live, and why it forces a new pattern.** Of the ADS-B
+  feeds, OpenSky is license-blocked for a live product (written license
+  required for operational use), adsb.fi/hexdb have redistribution gaps, and
+  only **airplanes.live is keyless + CORS-open + non-commercial-clean**
+  (verified `Access-Control-Allow-Origin: *`). Critically it serves a
+  **≤ 250 nm radius per query** and the 20-min Pages bake **cannot honestly
+  show moving aircraft** (a jet moves ~150 nm in 20 min — a baked dot would
+  be a lie by exactly Ember's own standard). So this globe is **client-direct
+  live fast-poll, viewport-following, regional** — the first globe that is
+  neither world-view-first nor bakeable.
+- **Viewport-follow** (`App.tsx`): a `flightsView` memo derives center +
+  radius from the camera (`mapBus.getCamera`/`getBounds`, haversine
+  center→corner, capped 250 nm, center rounded to 0.1° so jitter doesn't
+  refetch), re-keyed on `viewEpoch` (the moveend bump). Below
+  `FLIGHTS_MIN_ZOOM` (4.5) the query is disabled and the HUD prompts
+  "zoom in to load live aircraft"; `feedReadiness.flights` treats a null
+  follow-window as ready so the world-zoom entrance never hangs. A jump-load/
+  deep link fires no moveend, so the `mapBus` setup effect nudges `viewEpoch`
+  once on map-ready to seed the first compute.
+- **Render** (`flightLayers.ts`): native **SDF plane glyph** (`addImage`
+  `sdf:true`) so one icon recolors per-feature by altitude (amber on the deck
+  → sky → indigo → violet at cruise; grey on ground), rotated to ground track
+  with `icon-rotation-alignment:'map'` so heading stays geographic under the
+  globe. A collision-optional callsign label appears from zoom 7. Native
+  because deck Icon/Text don't render under the globe camera. Click →
+  `FlightCard` (callsign, type, altitude, ground speed, heading, registration,
+  ICAO hex) via `queryRenderedFeatures` on the plane layer; selection is the
+  stable ICAO hex resolved against the current snapshot, so a plane that flies
+  out of the view closes its own card.
+- **Coverage honesty** (non-negotiable): positions are seconds old; the
+  legend + HUD say **blank areas mean no receiver coverage, not empty sky**
+  (community ADS-B is dense over the US/EU, sparse over oceans/Africa/Asia),
+  and that the view shows the **current region only** (≈250 nm). The
+  **non-commercial airplanes.live attribution** rides in the footer and
+  legend as the license requires. `headless-check.mjs` gained the `flt-`
+  prefix; `verify-cards.mjs` clicks a live aircraft (without jumping the
+  camera, which would change the follow-window) and asserts the card.
+- **ADSBExchange-grade detail** (Frank's follow-up "make it display
+  everything flightradar/adsbexchange"): the parse now keeps the full ADS-B
+  block — geometric altitude, IAS/TAS/Mach, **vertical rate**, squawk,
+  emergency status, emitter category, **operator** (`ownOp`), year, and the
+  tar1090 **military/interesting** flags (`dbFlags`). Rendering adds a
+  fuller **altitude rainbow**, **emergency** aircraft in red (squawk
+  7500/7600/7700 or an ADS-B emergency flag) + enlarged, **military** badge,
+  **data-block labels** (callsign, then FL + speed once zoomed in), and
+  **trails**: ADS-B carries no history, so the selected plane's path is
+  accumulated client-side across snapshots (keyed by hex, capped, pruned) and
+  drawn colored by altitude per segment. The card shows all of it. **Route /
+  airline schedule is honestly absent** — it isn't broadcast over ADS-B
+  (FR24 gets it from a proprietary schedule DB); the card + legend say so.
+- **Phase 12 review round** (adversarial workflow, 5 findings fixed, all the
+  "stale-shown-as-live" class): (1) zooming out below the load zoom left the
+  last snapshot's planes **frozen at full opacity forever** while the HUD said
+  "zoom in" — the render surfaces (`flights`/`flightTrail` props, `resolved
+  Aircraft`, debug count) are now gated on `flightsView`, so an out-of-range
+  zoom clears the layer (verified: 95 planes → 0). (2) A closed FlightCard
+  **silently re-opened** when the plane re-entered the view — `selectedAircraft`
+  is now cleared once a real snapshot confirms it's gone. (3) During a feed
+  **outage** the frozen last-good planes rendered as live — a `flightsStale`
+  flag (mirroring `quakesStale`) now dims them. (4) Airborne aircraft with **no
+  reported altitude** were colored amber (the "on the deck" stop) — now a
+  distinct neutral slate.
+- **Deferred (still on the shelf, per Frank's decisions)**: the **openAIP
+  airspace/FIR** layer beneath the aircraft (static, bakes honestly — needs
+  their keyless open-data path resolved, since the API is key-gated), and the
+  **armed-conflict globe** (UCDP verified events, baked + CC BY, re-scoped
+  from "war/tensions" which no dataset measures; plus a separate, clearly
+  labeled GDELT "conflict news attention" live layer — GDELT's raw 15-min
+  feed is confirmed but needs a bake/proxy, and UCDP's keyless bulk-download
+  path still needs resolving vs its token-gated API).

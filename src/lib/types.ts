@@ -331,6 +331,79 @@ export interface AuroraPayload {
   count: number
 }
 
+// ---------------------------------------------------------------------------
+// Live aircraft (airplanes.live ADS-B) — keyless, CORS-open, community
+// receivers, NON-COMMERCIAL. Served per 250 nm radius query, so this globe
+// follows the current VIEW (regional), not the whole planet at once.
+// ---------------------------------------------------------------------------
+
+export interface Aircraft {
+  /** ICAO 24-bit hex address (stable id) */
+  hex: string
+  /** callsign / flight number, trimmed ('' when not transmitting) */
+  flight: string
+  lat: number
+  lon: number
+  /** barometric altitude, ft (null when on ground or not reported) */
+  altFt: number | null
+  /** geometric (GPS) altitude, ft */
+  altGeomFt: number | null
+  /** true track over ground, degrees (null when not reported) */
+  track: number | null
+  /** ground speed, kt (null when not reported) */
+  gsKt: number | null
+  /** indicated airspeed, kt */
+  iasKt: number | null
+  /** true airspeed, kt */
+  tasKt: number | null
+  /** Mach number */
+  mach: number | null
+  /** barometric vertical rate, ft/min (+climb / −descend) */
+  baroRateFpm: number | null
+  /** transponder squawk code, e.g. "1200" ('' when unknown) */
+  squawk: string
+  /** ADS-B emergency status ("none"|"general"|"lifeguard"|"minfuel"|"nordo"|"unlawful"|"downed") */
+  emergency: string
+  /** ADS-B emitter category, e.g. "A3" ('' when unknown) */
+  category: string
+  /** ICAO type code, e.g. "A320" ('' when unknown) */
+  type: string
+  /** registration / tail number ('' when unknown) */
+  reg: string
+  /** human description, e.g. "Airbus A320" ('' when unknown) */
+  desc: string
+  /** owner / operator, e.g. "United Airlines" ('' when unknown) */
+  operator: string
+  /** build year ('' when unknown) */
+  year: string
+  /** flagged military in the tar1090 database (dbFlags bit 0) */
+  military: boolean
+  /** flagged "interesting"/special (dbFlags bit 1) */
+  interesting: boolean
+  /** autopilot selected altitude, ft (null when not reported) */
+  navAltFt: number | null
+  /** seconds since the last position update */
+  seenSec: number | null
+  /** transponder reports it on the ground */
+  onGround: boolean
+  /** derived: a real emergency (emergency field set, or squawk 7500/7600/7700) */
+  isEmergency: boolean
+}
+
+export interface FlightsData {
+  source: 'airplanes-live'
+  fetchedAt: string
+  /** the query center [lon, lat] and radius (nm) this snapshot covers */
+  center: [number, number]
+  radiusNm: number
+  aircraft: Aircraft[]
+  count: number
+}
+
+/** A clicked aircraft — its stable hex, resolved against the current
+ *  snapshot at render time (a plane that leaves the view closes its card). */
+export type AircraftSelection = { hex: string }
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

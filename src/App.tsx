@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
 import {
   AURORA_REFRESH_MS,
+  fetchAircraft,
   fetchAurora,
   fetchEonetEvents,
   fetchFireDecoded,
@@ -11,6 +12,8 @@ import {
   fetchQuakes,
   fetchQuota,
   fetchSevere,
+  FLIGHTS_MIN_ZOOM,
+  FLIGHTS_REFRESH_MS,
   HURRICANES_REFRESH_MS,
   LIGHTNING_REFRESH_MS,
   QUAKES_REFRESH_MS,
@@ -33,6 +36,7 @@ import { EventCard } from './components/EventCard'
 import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
+import { FlightCard } from './components/FlightCard'
 import { HurricaneCard, type ResolvedHurricaneSelection } from './components/HurricaneCard'
 import { QuakeCard } from './components/QuakeCard'
 import { SevereCard } from './components/SevereCard'
@@ -49,6 +53,18 @@ import { setEmber, SOURCES, useEmber } from './store'
 const CARD_POS =
   'z-20 w-72 absolute lg:bottom-8 lg:right-4 max-lg:bottom-24 max-lg:left-1/2 max-lg:-translate-x-1/2'
 
+/** Great-circle distance in nautical miles (flights viewport radius). */
+function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3440.065
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
+}
+
 export default function App() {
   const globe = useEmber((s) => s.globe)
   const source = useEmber((s) => s.source)
@@ -63,6 +79,7 @@ export default function App() {
   const selectedSevere = useEmber((s) => s.selectedSevere)
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
   const selectedQuake = useEmber((s) => s.selectedQuake)
+  const selectedAircraft = useEmber((s) => s.selectedAircraft)
   const viewEpoch = useEmber((s) => s.viewEpoch)
   const showChoropleth = useEmber((s) => s.showChoropleth)
   const showPerimeters = useEmber((s) => s.showPerimeters)
@@ -168,6 +185,39 @@ export default function App() {
     enabled: globe === 'aurora',
   })
 
+  // Flights globe (airplanes.live ADS-B): served per ≤250 nm radius, so the
+  // query FOLLOWS THE CURRENT VIEW — center + radius derived from the camera,
+  // re-keyed on camera settle (viewEpoch). Below FLIGHTS_MIN_ZOOM a single
+  // radius covers too little to be useful, so the query is disabled and the
+  // HUD prompts a zoom-in. Center rounded to 0.1° so jitter doesn't refetch.
+  const flightsView = useMemo(() => {
+    if (globe !== 'flights') return null
+    const cam = mapBus.getCamera?.()
+    if (!cam || cam.zoom < FLIGHTS_MIN_ZOOM) return null
+    const b = mapBus.getBounds?.()
+    let radiusNm = 250
+    if (b) {
+      const r = haversineNm(cam.lat, cam.lon, b.north, b.east)
+      if (Number.isFinite(r) && r > 0) radiusNm = Math.min(250, Math.max(20, Math.round(r)))
+    }
+    return { lat: Math.round(cam.lat * 10) / 10, lon: Math.round(cam.lon * 10) / 10, radiusNm }
+    // viewEpoch bumps on every camera settle → recompute the follow window
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globe, viewEpoch])
+
+  const {
+    data: flightsData,
+    isLoading: flightsLoading,
+    isError: flightsError,
+    error: flightsErr,
+  } = useQuery({
+    queryKey: ['flights', flightsView?.lat, flightsView?.lon, flightsView?.radiusNm],
+    queryFn: () => fetchAircraft(flightsView!.lat, flightsView!.lon, flightsView!.radiusNm),
+    placeholderData: keepPreviousData,
+    refetchInterval: FLIGHTS_REFRESH_MS,
+    enabled: globe === 'flights' && Boolean(flightsView),
+  })
+
   // Wall-clock tick for the non-fire globes: lightning lag chips and the
   // severe expiry filter must track real time between refetches (which can
   // be 10 min apart on Pages; review findings).
@@ -271,6 +321,70 @@ export default function App() {
     return quakesData.quakes.find((q) => q.id === selectedQuake.id) ?? null
   }, [selectedQuake, quakesData])
 
+  // A clicked aircraft resolves against the current snapshot — a plane that
+  // flies out of the view (or below the load zoom) closes its own card.
+  const resolvedAircraft = useMemo(() => {
+    if (!selectedAircraft || !flightsView || !flightsData) return null
+    return flightsData.aircraft.find((a) => a.hex === selectedAircraft.hex) ?? null
+  }, [selectedAircraft, flightsView, flightsData])
+
+  // Make "leaving the view closes the card" literally stick: once a real
+  // snapshot confirms the selected plane is gone, clear the store selection so
+  // it can't silently re-open when the plane (or the viewport) comes back
+  // (review finding). Gated on flightsData so a fresh selection mid-load isn't
+  // cleared before its snapshot arrives.
+  useEffect(() => {
+    if (globe === 'flights' && selectedAircraft && flightsData && flightsView && !resolvedAircraft) {
+      setEmber({ selectedAircraft: null })
+    }
+  }, [globe, selectedAircraft, flightsData, flightsView, resolvedAircraft])
+
+  // the feed is erroring while last-good planes are shown (keepPreviousData) —
+  // dim them so a frozen snapshot never reads as live (mirrors quakesStale)
+  const flightsStale = globe === 'flights' && flightsError && Boolean(flightsData)
+
+  // ADS-B carries no track history, so build a trail by accumulating each
+  // aircraft's position across snapshots (keyed by hex, capped, pruned when a
+  // plane hasn't been seen for a while). Only the SELECTED plane's trail is
+  // drawn — the path we've watched since it came into view.
+  const flightTrailsRef = useRef<Map<string, { pts: Array<[number, number, number]>; seen: number }>>(
+    new Map(),
+  )
+  useEffect(() => {
+    if (globe !== 'flights') {
+      flightTrailsRef.current.clear()
+      return
+    }
+    if (!flightsData) return
+    const now = Date.now()
+    const m = flightTrailsRef.current
+    for (const a of flightsData.aircraft) {
+      let e = m.get(a.hex)
+      if (!e) {
+        e = { pts: [], seen: now }
+        m.set(a.hex, e)
+      }
+      e.seen = now
+      const last = e.pts[e.pts.length - 1]
+      const alt = a.onGround ? 0 : (a.altFt ?? (last ? last[2] : 0))
+      // only append when it actually moved (~10 m) so a parked plane doesn't
+      // pile up identical points
+      if (!last || Math.abs(last[0] - a.lon) > 1e-4 || Math.abs(last[1] - a.lat) > 1e-4) {
+        e.pts.push([a.lon, a.lat, alt])
+        if (e.pts.length > 400) e.pts.shift()
+      }
+    }
+    for (const [hex, e] of m) if (now - e.seen > 5 * 60_000) m.delete(hex)
+  }, [flightsData, globe])
+
+  const flightTrail = useMemo(() => {
+    if (globe !== 'flights' || !selectedAircraft) return null
+    const e = flightTrailsRef.current.get(selectedAircraft.hex)
+    return e && e.pts.length >= 2 ? e.pts.slice() : null
+    // recompute as new snapshots extend the trail or the selection changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAircraft, flightsData, globe])
+
   // The entrance flies once the ACTIVE globe's feed resolves — data or a
   // definitive error; never park in orbit forever on a dead feed. Keyed
   // exhaustively: a new GlobeId without an entry is a compile error.
@@ -281,6 +395,9 @@ export default function App() {
     hurricanes: Boolean(hurricanesData) || hurricanesError,
     quakes: Boolean(quakesData) || quakesError,
     aurora: Boolean(auroraData) || auroraError,
+    // when the view is too zoomed out to query (flightsView null), there is
+    // nothing to wait for — the globe shows a zoom-in prompt
+    flights: Boolean(flightsData) || flightsError || !flightsView,
   }
   const entranceReady = feedReadiness[globe]
 
@@ -560,6 +677,21 @@ export default function App() {
         )}
       </>
     ),
+    flights: (
+      <>
+        {flightsError && errChip('Live aircraft feed unreachable — retrying automatically')}
+        {globe === 'flights' && !flightsView && (
+          <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+            Zoom in to load live aircraft — the feed covers ≈250 nm around the view
+          </div>
+        )}
+        {flightsData && !flightsError && flightsView && flightsData.count === 0 && (
+          <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+            No aircraft in view — or no receiver coverage here (blank ≠ empty sky)
+          </div>
+        )}
+      </>
+    ),
   }
 
   const feedStatus: Record<GlobeId, ReactNode> = {
@@ -741,6 +873,27 @@ export default function App() {
         )}
       </>
     ),
+    flights: (
+      <>
+        {!flightsView && globe === 'flights' && (
+          <span className="text-slate-300">ZOOM IN for live aircraft</span>
+        )}
+        {flightsView && flightsLoading && !flightsData && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.flights.feedName}…</span>
+        )}
+        {flightsError && (
+          <span className="text-red-400">
+            FEED ERROR — {flightsErr instanceof Error ? flightsErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {flightsView && flightsData && !flightsError && (
+          <span>
+            <span className="text-indigo-300">{flightsData.count.toLocaleString()}</span> aircraft ·
+            current view ({flightsData.radiusNm} nm) · airplanes.live
+          </span>
+        )}
+      </>
+    ),
   }
 
   return (
@@ -755,6 +908,9 @@ export default function App() {
         quakes={globe === 'quakes' ? quakesData : undefined}
         quakesStale={globe === 'quakes' && quakesError && Boolean(quakesData)}
         aurora={globe === 'aurora' ? auroraData : undefined}
+        flights={globe === 'flights' && flightsView ? flightsData : undefined}
+        flightTrail={globe === 'flights' && flightsView ? flightTrail : null}
+        flightsStale={flightsStale}
         entranceReady={entranceReady}
         events={events}
         quality={quality}
@@ -798,6 +954,12 @@ export default function App() {
         <QuakeCard
           quake={resolvedQuake}
           onClose={() => setEmber({ selectedQuake: null })}
+          className={CARD_POS}
+        />
+      ) : globe === 'flights' && resolvedAircraft ? (
+        <FlightCard
+          aircraft={resolvedAircraft}
+          onClose={() => setEmber({ selectedAircraft: null })}
           className={CARD_POS}
         />
       ) : (
@@ -911,6 +1073,12 @@ export default function App() {
             {auroraData.forecastTime ? `${auroraData.forecastTime.slice(11, 16)}Z` : 'now'}
           </div>
         )}
+        {globe === 'flights' && flightsData && flightsView && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            live ADS-B · community receivers · blank = no coverage · upd{' '}
+            {new Date(flightsData.fetchedAt).toISOString().slice(11, 19)}Z
+          </div>
+        )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
@@ -929,9 +1097,11 @@ export default function App() {
                     ? `${(quakesData?.counts.total ?? 0).toLocaleString()} quakes 🌍`
                     : globe === 'aurora'
                       ? `${(auroraData?.count ?? 0).toLocaleString()} cells · peak ${auroraData?.peakProb ?? 0}% 🌌`
-                      : `${(data?.count ?? 0).toLocaleString()}${
-                          data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
-                        }`}
+                      : globe === 'flights'
+                        ? `${(flightsView ? (flightsData?.count ?? 0) : 0).toLocaleString()} aircraft ✈${flightsStale ? ' · STALE' : ''}`
+                        : `${(data?.count ?? 0).toLocaleString()}${
+                            data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                          }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}

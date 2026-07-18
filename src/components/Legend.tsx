@@ -3,6 +3,7 @@ import { FRP_STOPS } from '../lib/colors'
 import { CAT } from '../lib/hurricaneLayers'
 import { lightningColor } from '../lib/lightningBinary'
 import { auroraColor } from '../lib/auroraLayers'
+import { altColor } from '../lib/flightLayers'
 import { quakeColor } from '../lib/quakeLayers'
 import type { GlobeId } from '../store'
 
@@ -264,6 +265,51 @@ function AuroraLegend(_props: { hasMtg?: boolean }) {
   )
 }
 
+const FLIGHT_GRADIENT = `linear-gradient(90deg, ${[0, 10000, 20000, 30000, 40000]
+  .map((a, i) => {
+    const [r, g, b] = altColor(a, false)
+    return `rgb(${r},${g},${b}) ${(i / 4) * 100}%`
+  })
+  .join(', ')})`
+
+function FlightLegend(_props: { hasMtg?: boolean }) {
+  return (
+    <>
+      <div className="h-2 rounded-sm" style={{ background: FLIGHT_GRADIENT }} />
+      <div className="mt-0.5 flex justify-between font-mono text-[9px] text-slate-500">
+        <span>0</span>
+        <span>10k</span>
+        <span>20k</span>
+        <span>30k</span>
+        <span>40k ft</span>
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">altitude · the plane points along its track</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span className="h-0 w-3.5 shrink-0 border-t-2 border-emerald-300/70" />
+          <span className="text-[10px] text-slate-400">trail · path since you selected it</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-red-500" />
+          <span className="text-[10px] text-slate-400">red · emergency squawk</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-[8px] text-amber-300">MIL</span>
+          <span className="text-[10px] text-slate-400">military · grey when on the ground</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          Live ADS-B from <strong>airplanes.live</strong> community receivers (non-commercial),
+          positions ~seconds old. Shows the <strong>current view only</strong> (≈250 nm around
+          center) — zoom into a region to load. Blank areas mean no receiver coverage, not empty
+          sky; oceans and much of Africa/Asia are sparse. Route/airline schedule isn&apos;t in
+          ADS-B. Source: airplanes.live.
+        </p>
+      </div>
+    </>
+  )
+}
+
 function FireLegend() {
   return (
     <>
@@ -329,6 +375,7 @@ const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
   hurricanes: HurricaneLegend,
   quakes: QuakeLegend,
   aurora: AuroraLegend,
+  flights: FlightLegend,
 }
 
 export function Legend({

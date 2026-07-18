@@ -8,6 +8,7 @@ import type {
   DecodedFire,
   EonetEvent,
   FireData,
+  FlightsData,
   HurricanePayload,
   LightningData,
   QuakePayload,
@@ -32,6 +33,7 @@ import {
   syncQuakeLayers,
 } from '../lib/quakeLayers'
 import { setAuroraShimmer, syncAuroraLayers } from '../lib/auroraLayers'
+import { FLIGHT_CLICK_LAYERS, pickAircraft, syncFlightLayers } from '../lib/flightLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -118,6 +120,9 @@ export function EmberMap({
   quakes,
   quakesStale,
   aurora,
+  flights,
+  flightTrail,
+  flightsStale,
   entranceReady,
   events,
   quality,
@@ -142,6 +147,12 @@ export function EmberMap({
   quakesStale: boolean
   /** aurora forecast field (NOAA OVATION), undefined until its globe is active */
   aurora: AuroraPayload | undefined
+  /** live aircraft snapshot (airplanes.live), undefined until its globe is active */
+  flights: FlightsData | undefined
+  /** selected aircraft's accumulated [lon,lat,alt] trail (null when none) */
+  flightTrail: Array<[number, number, number]> | null
+  /** the aircraft feed is erroring while last-good planes are shown */
+  flightsStale: boolean
   /** active globe's data arrived OR its query errored — the entrance must
    *  not wait forever on a feed that is down (review finding); App owns the
    *  per-globe query state, so App computes this */
@@ -190,6 +201,7 @@ export function EmberMap({
   const selectedEventId = useEmber((s) => s.selectedEventId)
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
   const selectedQuake = useEmber((s) => s.selectedQuake)
+  const selectedAircraft = useEmber((s) => s.selectedAircraft)
 
   // Storm-head highlight key (NHC id / EONET title); forecast-point
   // selections have no head to emphasize.
@@ -200,6 +212,7 @@ export function EmberMap({
         ? selectedHurricane.title
         : null
   const quakeSelId = selectedQuake?.id ?? null
+  const aircraftSelHex = selectedAircraft?.hex ?? null
 
   // Live mode shows the whole fetched window; a playhead shows a 24h slice
   // ending `playhead` days ago. Either way it's one GPU uniform.
@@ -254,6 +267,10 @@ export function EmberMap({
     quakes,
     quakeSelId,
     aurora,
+    flights,
+    flightTrail,
+    flightsStale,
+    aircraftSelHex,
   })
   styleStateRef.current = {
     projection,
@@ -274,6 +291,10 @@ export function EmberMap({
     quakes,
     quakeSelId,
     aurora,
+    flights,
+    flightTrail,
+    flightsStale,
+    aircraftSelHex,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -306,6 +327,13 @@ export function EmberMap({
     syncAuroraLayers(map, s.aurora ?? null, {
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'aurora',
+    })
+    syncFlightLayers(map, s.flights ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'flights',
+      selectedHex: s.aircraftSelHex,
+      trail: s.flightTrail,
+      stale: s.flightsStale,
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -383,7 +411,8 @@ export function EmberMap({
       globe === 'severe' ||
       globe === 'hurricanes' ||
       globe === 'quakes' ||
-      globe === 'aurora'
+      globe === 'aurora' ||
+      globe === 'flights'
     )
       return
     let raf = 0
@@ -474,6 +503,21 @@ export function EmberMap({
       visible: globe === 'aurora',
     })
   }, [mapLoaded, aurora, globe])
+
+  // Dedicated re-sync for the live-aircraft snapshot (6 s poll / viewport
+  // change) + selection highlight.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncFlightLayers(map, flights ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'flights',
+      selectedHex: aircraftSelHex,
+      trail: flightTrail,
+      stale: flightsStale,
+    })
+  }, [mapLoaded, flights, globe, aircraftSelHex, flightTrail, flightsStale])
 
   // Aurora shimmer: a self-contained rAF gently breathes the glow opacity,
   // mounted only on the aurora globe (same idiom as the quake ripple — its own
@@ -570,6 +614,10 @@ export function EmberMap({
         setEmber({ selectedQuake: pickQuakeFeature(map, e.point) })
         return
       }
+      if (s.globe === 'flights') {
+        setEmber({ selectedAircraft: pickAircraft(map, e.point) })
+        return
+      }
       if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
       if (!s.full) return
       const idx = findNearestHotspot(
@@ -594,7 +642,11 @@ export function EmberMap({
   // hovering a clickable feature (review finding). Only attached on the two
   // native-picking globes, so it never fights EONET's own cursor handling.
   useEffect(() => {
-    if (!mapLoaded || (globe !== 'severe' && globe !== 'hurricanes' && globe !== 'quakes')) return
+    if (
+      !mapLoaded ||
+      (globe !== 'severe' && globe !== 'hurricanes' && globe !== 'quakes' && globe !== 'flights')
+    )
+      return
     const map = mapRef.current?.getMap()
     if (!map) return
     const clickLayers = (
@@ -602,7 +654,9 @@ export function EmberMap({
         ? SEVERE_CLICK_LAYERS
         : globe === 'hurricanes'
           ? HURRICANE_CLICK_LAYERS
-          : QUAKE_CLICK_LAYERS
+          : globe === 'quakes'
+            ? QUAKE_CLICK_LAYERS
+            : FLIGHT_CLICK_LAYERS
     ) as readonly string[]
     const onMove = (e: MapMouseEvent) => {
       const present = clickLayers.filter((l) => map.getLayer(l))
@@ -645,6 +699,10 @@ export function EmberMap({
         return null
       }
     }
+    // Now that the camera is queryable, nudge viewport-derived state (the
+    // flights follow-window) to initialize: a jump-load / deep link fires no
+    // moveend, so nothing else would trigger the first flightsView compute.
+    setEmber({ viewEpoch: (useEmber.getState().viewEpoch + 1) % 1_000_000 })
     return () => {
       mapBus.flyTo = null
       mapBus.getBounds = null
@@ -655,8 +713,14 @@ export function EmberMap({
   const layers = useMemo(() => {
     // splats render beneath the event reticles once those layers exist
     const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
-    // all-native globes (polygons/lines/points/field — no deck splats)
-    if (globe === 'severe' || globe === 'hurricanes' || globe === 'quakes' || globe === 'aurora')
+    // all-native globes (polygons/lines/points/field/symbols — no deck splats)
+    if (
+      globe === 'severe' ||
+      globe === 'hurricanes' ||
+      globe === 'quakes' ||
+      globe === 'aurora' ||
+      globe === 'flights'
+    )
       return []
     if (globe === 'lightning') {
       return lightning
