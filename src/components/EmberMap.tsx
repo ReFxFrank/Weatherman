@@ -5,6 +5,7 @@ import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import type {
   AuroraPayload,
+  ConflictPayload,
   DecodedFire,
   EonetEvent,
   FireData,
@@ -34,6 +35,7 @@ import {
 } from '../lib/quakeLayers'
 import { setAuroraShimmer, syncAuroraLayers } from '../lib/auroraLayers'
 import { FLIGHT_CLICK_LAYERS, pickAircraft, syncFlightLayers } from '../lib/flightLayers'
+import { CONFLICT_CLICK_LAYERS, pickConflictFeature, syncConflictLayers } from '../lib/conflictLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -123,6 +125,7 @@ export function EmberMap({
   flights,
   flightTrail,
   flightsStale,
+  conflict,
   entranceReady,
   events,
   quality,
@@ -153,6 +156,8 @@ export function EmberMap({
   flightTrail: Array<[number, number, number]> | null
   /** the aircraft feed is erroring while last-good planes are shown */
   flightsStale: boolean
+  /** armed-conflict payload (UCDP + GDELT), undefined until its globe is active */
+  conflict: ConflictPayload | undefined
   /** active globe's data arrived OR its query errored — the entrance must
    *  not wait forever on a feed that is down (review finding); App owns the
    *  per-globe query state, so App computes this */
@@ -202,6 +207,7 @@ export function EmberMap({
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
   const selectedQuake = useEmber((s) => s.selectedQuake)
   const selectedAircraft = useEmber((s) => s.selectedAircraft)
+  const selectedConflict = useEmber((s) => s.selectedConflict)
 
   // Storm-head highlight key (NHC id / EONET title); forecast-point
   // selections have no head to emphasize.
@@ -271,6 +277,8 @@ export function EmberMap({
     flightTrail,
     flightsStale,
     aircraftSelHex,
+    conflict,
+    selectedConflict,
   })
   styleStateRef.current = {
     projection,
@@ -295,6 +303,8 @@ export function EmberMap({
     flightTrail,
     flightsStale,
     aircraftSelHex,
+    conflict,
+    selectedConflict,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -334,6 +344,11 @@ export function EmberMap({
       selectedHex: s.aircraftSelHex,
       trail: s.flightTrail,
       stale: s.flightsStale,
+    })
+    syncConflictLayers(map, s.conflict ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'conflict',
+      selected: s.selectedConflict,
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -412,7 +427,8 @@ export function EmberMap({
       globe === 'hurricanes' ||
       globe === 'quakes' ||
       globe === 'aurora' ||
-      globe === 'flights'
+      globe === 'flights' ||
+      globe === 'conflict'
     )
       return
     let raf = 0
@@ -519,6 +535,18 @@ export function EmberMap({
     })
   }, [mapLoaded, flights, globe, aircraftSelHex, flightTrail, flightsStale])
 
+  // Dedicated re-sync for the conflict payload (5-min poll) + selection.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncConflictLayers(map, conflict ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'conflict',
+      selected: selectedConflict,
+    })
+  }, [mapLoaded, conflict, globe, selectedConflict])
+
   // Aurora shimmer: a self-contained rAF gently breathes the glow opacity,
   // mounted only on the aurora globe (same idiom as the quake ripple — its own
   // loop, no React re-render). document.hidden pauses it.
@@ -618,6 +646,10 @@ export function EmberMap({
         setEmber({ selectedAircraft: pickAircraft(map, e.point) })
         return
       }
+      if (s.globe === 'conflict') {
+        setEmber({ selectedConflict: pickConflictFeature(map, e.point) })
+        return
+      }
       if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
       if (!s.full) return
       const idx = findNearestHotspot(
@@ -644,7 +676,11 @@ export function EmberMap({
   useEffect(() => {
     if (
       !mapLoaded ||
-      (globe !== 'severe' && globe !== 'hurricanes' && globe !== 'quakes' && globe !== 'flights')
+      (globe !== 'severe' &&
+        globe !== 'hurricanes' &&
+        globe !== 'quakes' &&
+        globe !== 'flights' &&
+        globe !== 'conflict')
     )
       return
     const map = mapRef.current?.getMap()
@@ -656,7 +692,9 @@ export function EmberMap({
           ? HURRICANE_CLICK_LAYERS
           : globe === 'quakes'
             ? QUAKE_CLICK_LAYERS
-            : FLIGHT_CLICK_LAYERS
+            : globe === 'flights'
+              ? FLIGHT_CLICK_LAYERS
+              : CONFLICT_CLICK_LAYERS
     ) as readonly string[]
     const onMove = (e: MapMouseEvent) => {
       const present = clickLayers.filter((l) => map.getLayer(l))
@@ -719,7 +757,8 @@ export function EmberMap({
       globe === 'hurricanes' ||
       globe === 'quakes' ||
       globe === 'aurora' ||
-      globe === 'flights'
+      globe === 'flights' ||
+      globe === 'conflict'
     )
       return []
     if (globe === 'lightning') {

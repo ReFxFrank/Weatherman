@@ -1,4 +1,4 @@
-import { Activity, Flame, Plane, Shell, Sparkles, Tornado, Zap, type LucideIcon } from 'lucide-react'
+import { Activity, Flame, Plane, Shell, Sparkles, Swords, Tornado, Zap, type LucideIcon } from 'lucide-react'
 
 /**
  * THE globe registry — the single source of truth for which data globes
@@ -80,6 +80,14 @@ export const GLOBE_DEFS = [
     activeCls: 'border-indigo-400/40 bg-indigo-400/15 text-indigo-300',
     feedName: 'ADS-B FEED',
     attribution: 'Live aircraft: airplanes.live (non-commercial)',
+  },
+  {
+    id: 'conflict',
+    label: 'CONFLICT',
+    Icon: Swords,
+    activeCls: 'border-rose-500/40 bg-rose-500/15 text-rose-300',
+    feedName: 'UCDP/GDELT FEED',
+    attribution: 'Armed conflict: UCDP (CC BY 4.0) + GDELT',
   },
 ] as const satisfies readonly GlobeDef[]
 

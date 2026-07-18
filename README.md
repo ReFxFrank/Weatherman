@@ -3,8 +3,9 @@
 **Live hazard globes** — a dark, rotating Earth in space with selectable data globes: glowing
 near-real-time fire detections from NASA satellites, live lightning from NOAA and EUMETSAT
 geostationary sensors, US severe-weather warnings from the NWS, tropical cyclones with
-NHC forecast cones, global earthquakes from USGS, the aurora forecast from NOAA SWPC, and
-live aircraft from community ADS-B. Mission-control aesthetics, GPU rendering, real data only.
+NHC forecast cones, global earthquakes from USGS, the aurora forecast from NOAA SWPC,
+live aircraft from community ADS-B, and armed-conflict events from UCDP + GDELT.
+Mission-control aesthetics, GPU rendering, real data only.
 
 > Build spec: [`docs/BRIEF.md`](docs/BRIEF.md) · Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
@@ -24,7 +25,8 @@ live aircraft from community ADS-B. Mission-control aesthetics, GPU rendering, r
 | **9 — Honesty hardening + detail cards** | severe `degraded` marker (SPC outage ≠ quiet day), NWS expiry-offset comparison fix, mobile Display/Legend sheet on every globe, click-to-inspect detail cards for warnings/watches/reports and storm heads/forecast points, interaction-verification harness (`verify-cards.mjs`) | ✅ done |
 | **10 — Earthquakes globe** | live USGS all-day feed (keyless, CORS-open, client-fetched every minute), magnitude-scaled glow + core + animated ripple, M≥6 labels, seismic color ramp, click-to-inspect detail card (depth/felt/tsunami/USGS link), instrumentation-bias coverage legend | ✅ done |
 | **11 — Aurora globe** | NOAA SWPC OVATION forecast field (keyless, CORS-open, ~5-min grid), green auroral-oval glow at both poles with a gentle shimmer, honestly labeled as a probability forecast (not observed), pairs with the night-side terminator | ✅ done |
-| **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, click-to-inspect detail card, coverage-honest ("blank = no receiver coverage") | ✅ done (openAIP airspace layer + armed-conflict globe deferred, see DECISIONS) |
+| **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, click-to-inspect detail card, coverage-honest ("blank = no receiver coverage") | ✅ done |
+| **13 — Armed-conflict globe** | UCDP verified fatal events (CC BY, monthly, sized by death toll) + a separate labeled GDELT conflict-news layer (15-min, unverified), proxy/bake (server-side unzip), distinct rendering + cards, strong verified-vs-unverified honesty | ✅ done (FIR airspace layer next, see DECISIONS) |
 
 ## Stack
 
@@ -125,7 +127,7 @@ unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 ### Deep links & dev params
 
 The URL mirrors the view — copy the address bar to share it:
-`?globe=lightning|severe|hurricanes|quakes|aurora|flights` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
+`?globe=lightning|severe|hurricanes|quakes|aurora|flights|conflict` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
 `?source=` · `?days=1..10` · `?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
 
 Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
@@ -139,5 +141,6 @@ Lightning Imager** ·
 Severe weather: **NOAA NWS / SPC** · Hurricanes: **NOAA NHC** ·
 Earthquakes: **USGS** · Aurora: **NOAA SWPC** (OVATION) ·
 Live aircraft: **airplanes.live** (community ADS-B, non-commercial) ·
+Armed conflict: **UCDP** (CC BY 4.0) + **GDELT** ·
 Named events & global storms: **NASA EONET** · Basemap:
 © [CARTO](https://carto.com/attributions), © OpenStreetMap contributors.

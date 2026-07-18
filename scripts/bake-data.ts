@@ -17,6 +17,7 @@ import { fetchAndEncode, PUBLIC_FEEDS, WINDOW_DAYS, type FeedWindow } from '../s
 import { fetchLightningOnce } from '../server/glm'
 import { fetchSevereOnce } from '../server/severe'
 import { fetchHurricanesOnce } from '../server/hurricanes'
+import { fetchConflictOnce } from '../server/conflict'
 
 setGlobalDispatcher(new EnvHttpProxyAgent())
 
@@ -263,6 +264,43 @@ async function main() {
     }
   }
 
+  // Armed conflict (UCDP verified events + GDELT conflict news): larger JSON
+  // than the other native globes but still KBs. Same degraded-prefers-complete
+  // policy as hurricanes (a source outage must not overwrite a good deploy or
+  // read as "no conflict"). UCDP is monthly, GDELT 15-min.
+  let conflict: { file: string; fetchedAt: string; counts?: unknown; degraded?: string[] } | null = null
+  if (process.env.SKIP_CONFLICT !== '1') {
+    try {
+      const payload = await fetchConflictOnce()
+      if (payload.degraded?.length) {
+        const prev = await reusePreviousJson('conflict.json')
+        if (prev && !(prev.json as { degraded?: string[] }).degraded?.length) {
+          await writeFile(join(OUT_DIR, 'conflict.json'), JSON.stringify({ ...prev.json, stale: true }))
+          conflict = { file: 'conflict.json', fetchedAt: prev.fetchedAt, counts: prev.json.counts }
+          console.warn(`REUSED previous conflict.json (fresh build degraded: ${payload.degraded.join(', ')})`)
+        } else {
+          await writeFile(join(OUT_DIR, 'conflict.json'), JSON.stringify(payload))
+          conflict = { file: 'conflict.json', fetchedAt: payload.fetchedAt, counts: payload.counts, degraded: payload.degraded }
+          console.warn(`baked DEGRADED conflict.json (${payload.degraded.join(', ')} down)`)
+        }
+      } else {
+        await writeFile(join(OUT_DIR, 'conflict.json'), JSON.stringify(payload))
+        conflict = { file: 'conflict.json', fetchedAt: payload.fetchedAt, counts: payload.counts }
+        console.log(`baked conflict.json: ${JSON.stringify(payload.counts)} · UCDP ${payload.ucdp.version}`)
+      }
+    } catch (err) {
+      const prev = await reusePreviousJson('conflict.json')
+      if (prev) {
+        await writeFile(join(OUT_DIR, 'conflict.json'), JSON.stringify({ ...prev.json, stale: true }))
+        conflict = { file: 'conflict.json', fetchedAt: prev.fetchedAt, counts: prev.json.counts }
+        console.warn(`REUSED previous conflict.json (from ${prev.fetchedAt})`)
+      } else {
+        failures.push(`conflict.json: ${err instanceof Error ? err.message.slice(0, 160) : err}`)
+        console.error('FAILED conflict.json:', err instanceof Error ? err.message.slice(0, 200) : err)
+      }
+    }
+  }
+
   const manifest = {
     generatedAt: new Date().toISOString(),
     hasKey: Boolean(MAP_KEY),
@@ -270,6 +308,7 @@ async function main() {
     lightning,
     severe,
     hurricanes,
+    conflict,
     failures,
   }
   await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))
@@ -279,7 +318,7 @@ async function main() {
   // reused, or lightning. (A deploy with data beats no deploy: a skipped run
   // leaves whatever won the last race live, and stale-labeled data beats a
   // broken site.)
-  if (baked.length === 0 && !lightning && !severe && !hurricanes) {
+  if (baked.length === 0 && !lightning && !severe && !hurricanes && !conflict) {
     console.error('nothing baked or reusable — refusing to deploy an empty feed')
     process.exit(1)
   }

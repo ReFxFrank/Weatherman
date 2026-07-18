@@ -4,8 +4,8 @@ Ember is a mission-control-styled web app: a dark rotating Earth in space with
 selectable **live hazard globes** — fires (NASA FIRMS), lightning (GOES GLM +
 Meteosat MTG-LI), severe weather (NWS/SPC), hurricanes (NHC + EONET),
 earthquakes (USGS), aurora (NOAA SWPC OVATION), live flights (airplanes.live
-ADS-B, viewport-following). Live at
-https://refxfrank.github.io/Weatherman/ (redeployed every ~20 min by cron).
+ADS-B, viewport-following), armed conflict (UCDP verified events + GDELT news).
+Live at https://refxfrank.github.io/Weatherman/ (redeployed every ~20 min by cron).
 
 Read next, in order:
 - `README.md` — phase/status table, stack, deploy modes, deep-link params

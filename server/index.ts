@@ -23,6 +23,7 @@ import {
 import { getLightningPayload } from './glm'
 import { getSeverePayload } from './severe'
 import { getHurricanePayload } from './hurricanes'
+import { getConflictPayload } from './conflict'
 
 // Honor HTTP(S)_PROXY/NO_PROXY if the host environment routes egress through a
 // proxy (no-op when those vars are unset).
@@ -158,6 +159,17 @@ app.get('/api/hurricanes', async (c) => {
     return c.json(payload)
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'hurricanes failure' }, 502)
+  }
+})
+
+/** Armed conflict (UCDP verified events + GDELT conflict news) — JSON. */
+app.get('/api/conflict', async (c) => {
+  try {
+    const payload = await getConflictPayload()
+    c.header('Cache-Control', 'public, max-age=300')
+    return c.json(payload)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'conflict failure' }, 502)
   }
 })
 

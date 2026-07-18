@@ -3,8 +3,10 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
 import {
   AURORA_REFRESH_MS,
+  CONFLICT_REFRESH_MS,
   fetchAircraft,
   fetchAurora,
+  fetchConflict,
   fetchEonetEvents,
   fetchFireDecoded,
   fetchHurricanes,
@@ -36,6 +38,7 @@ import { EventCard } from './components/EventCard'
 import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
+import { ConflictCard } from './components/ConflictCard'
 import { FlightCard } from './components/FlightCard'
 import { HurricaneCard, type ResolvedHurricaneSelection } from './components/HurricaneCard'
 import { QuakeCard } from './components/QuakeCard'
@@ -80,6 +83,7 @@ export default function App() {
   const selectedHurricane = useEmber((s) => s.selectedHurricane)
   const selectedQuake = useEmber((s) => s.selectedQuake)
   const selectedAircraft = useEmber((s) => s.selectedAircraft)
+  const selectedConflict = useEmber((s) => s.selectedConflict)
   const viewEpoch = useEmber((s) => s.viewEpoch)
   const showChoropleth = useEmber((s) => s.showChoropleth)
   const showPerimeters = useEmber((s) => s.showPerimeters)
@@ -183,6 +187,22 @@ export default function App() {
     placeholderData: keepPreviousData,
     refetchInterval: AURORA_REFRESH_MS,
     enabled: globe === 'aurora',
+  })
+
+  // Armed-conflict globe (UCDP verified events + GDELT conflict news): baked/
+  // proxied JSON (GDELT is a zipped feed with no browser CORS). UCDP is
+  // monthly, GDELT 15-min.
+  const {
+    data: conflictData,
+    isLoading: conflictLoading,
+    isError: conflictError,
+    error: conflictErr,
+  } = useQuery({
+    queryKey: ['conflict'],
+    queryFn: fetchConflict,
+    placeholderData: keepPreviousData,
+    refetchInterval: CONFLICT_REFRESH_MS,
+    enabled: globe === 'conflict',
   })
 
   // Flights globe (airplanes.live ADS-B): served per ≤250 nm radius, so the
@@ -385,6 +405,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAircraft, flightsData, globe])
 
+  // A clicked conflict feature resolves against the current payload by STABLE
+  // id (the arrays are replaced wholesale each poll, so an index would silently
+  // rebind the open card/highlight to a different event — review finding). A
+  // refetch that drops the exact event closes its card.
+  const resolvedConflict = useMemo(() => {
+    if (!selectedConflict || !conflictData) return null
+    if (selectedConflict.kind === 'ucdp') {
+      const event = conflictData.ucdp.events.find((e) => e.id === selectedConflict.id)
+      return event ? ({ kind: 'ucdp', event } as const) : null
+    }
+    const event = conflictData.gdelt.events.find((e) => e.id === selectedConflict.id)
+    return event ? ({ kind: 'news', event } as const) : null
+  }, [selectedConflict, conflictData])
+
   // The entrance flies once the ACTIVE globe's feed resolves — data or a
   // definitive error; never park in orbit forever on a dead feed. Keyed
   // exhaustively: a new GlobeId without an entry is a compile error.
@@ -398,6 +432,7 @@ export default function App() {
     // when the view is too zoomed out to query (flightsView null), there is
     // nothing to wait for — the globe shows a zoom-in prompt
     flights: Boolean(flightsData) || flightsError || !flightsView,
+    conflict: Boolean(conflictData) || conflictError,
   }
   const entranceReady = feedReadiness[globe]
 
@@ -692,6 +727,18 @@ export default function App() {
         )}
       </>
     ),
+    conflict: (
+      <>
+        {conflictError && errChip('Conflict data feed unreachable — retrying automatically')}
+        {conflictData && !conflictError && (conflictData.degraded?.length ?? 0) > 0 && (
+          <div className={`pointer-events-auto flex items-center gap-2 border-amber-500/30 px-3 py-2 text-[11px] text-amber-300 ${glass}`}>
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+            Some conflict sources unavailable ({conflictData.degraded!.join(', ')}) — a gap here is
+            a source outage, not peace
+          </div>
+        )}
+      </>
+    ),
   }
 
   const feedStatus: Record<GlobeId, ReactNode> = {
@@ -894,6 +941,30 @@ export default function App() {
         )}
       </>
     ),
+    conflict: (
+      <>
+        {conflictLoading && !conflictData && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.conflict.feedName}…</span>
+        )}
+        {conflictError && (
+          <span className="text-red-400">
+            FEED ERROR — {conflictErr instanceof Error ? conflictErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {conflictData && !conflictError && (
+          <span>
+            <span className="text-rose-300">{conflictData.counts.verified.toLocaleString()}</span>
+            {conflictData.counts.verified < conflictData.counts.verifiedTotal && (
+              <span className="text-slate-500"> of {conflictData.counts.verifiedTotal.toLocaleString()}</span>
+            )}{' '}
+            verified events · {conflictData.counts.verifiedDeaths.toLocaleString()} deaths (~13mo) ·{' '}
+            <span className="text-sky-300">{conflictData.counts.news}</span> news
+            {conflictData.degraded?.length ? ' · PARTIAL' : ''}
+            {conflictData.stale ? ' · STALE' : ''}
+          </span>
+        )}
+      </>
+    ),
   }
 
   return (
@@ -911,6 +982,7 @@ export default function App() {
         flights={globe === 'flights' && flightsView ? flightsData : undefined}
         flightTrail={globe === 'flights' && flightsView ? flightTrail : null}
         flightsStale={flightsStale}
+        conflict={globe === 'conflict' ? conflictData : undefined}
         entranceReady={entranceReady}
         events={events}
         quality={quality}
@@ -960,6 +1032,12 @@ export default function App() {
         <FlightCard
           aircraft={resolvedAircraft}
           onClose={() => setEmber({ selectedAircraft: null })}
+          className={CARD_POS}
+        />
+      ) : globe === 'conflict' && resolvedConflict ? (
+        <ConflictCard
+          selection={resolvedConflict}
+          onClose={() => setEmber({ selectedConflict: null })}
           className={CARD_POS}
         />
       ) : (
@@ -1079,6 +1157,11 @@ export default function App() {
             {new Date(flightsData.fetchedAt).toISOString().slice(11, 19)}Z
           </div>
         )}
+        {globe === 'conflict' && conflictData && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            UCDP verified (monthly, ~1mo lag) + GDELT news (15 min, unverified) · blank ≠ peace
+          </div>
+        )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
@@ -1097,7 +1180,9 @@ export default function App() {
                     ? `${(quakesData?.counts.total ?? 0).toLocaleString()} quakes 🌍`
                     : globe === 'aurora'
                       ? `${(auroraData?.count ?? 0).toLocaleString()} cells · peak ${auroraData?.peakProb ?? 0}% 🌌`
-                      : globe === 'flights'
+                      : globe === 'conflict'
+                        ? `${(conflictData?.counts.verified ?? 0).toLocaleString()} events · ${conflictData?.counts.news ?? 0} news ⚔`
+                        : globe === 'flights'
                         ? `${(flightsView ? (flightsData?.count ?? 0) : 0).toLocaleString()} aircraft ✈${flightsStale ? ' · STALE' : ''}`
                         : `${(data?.count ?? 0).toLocaleString()}${
                             data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''

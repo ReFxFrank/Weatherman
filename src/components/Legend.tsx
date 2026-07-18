@@ -3,6 +3,7 @@ import { FRP_STOPS } from '../lib/colors'
 import { CAT } from '../lib/hurricaneLayers'
 import { lightningColor } from '../lib/lightningBinary'
 import { auroraColor } from '../lib/auroraLayers'
+import { conflictTypeColor } from '../lib/conflictLayers'
 import { altColor } from '../lib/flightLayers'
 import { quakeColor } from '../lib/quakeLayers'
 import type { GlobeId } from '../store'
@@ -310,6 +311,49 @@ function FlightLegend(_props: { hasMtg?: boolean }) {
   )
 }
 
+function ConflictLegend(_props: { hasMtg?: boolean }) {
+  const swatch = (type: number) => {
+    const [r, g, b] = conflictTypeColor(type)
+    return `rgb(${r},${g},${b})`
+  }
+  return (
+    <>
+      <p className="mb-1 text-[10px] font-semibold text-rose-300/90">Verified events · UCDP</p>
+      <div className="space-y-1.5">
+        {[
+          [1, 'state-based conflict'],
+          [2, 'non-state conflict'],
+          [3, 'one-sided (civilians)'],
+        ].map(([t, label]) => (
+          <div key={t as number} className="flex items-center gap-2.5">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: swatch(t as number) }} />
+            <span className="text-[10px] text-slate-400">{label as string}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-2.5">
+          <span className="flex shrink-0 items-end gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+            <span className="h-3 w-3 rounded-full bg-slate-400" />
+          </span>
+          <span className="text-[10px] text-slate-400">size = death toll</span>
+        </div>
+      </div>
+      <p className="mb-1 mt-2.5 text-[10px] font-semibold text-sky-300/90">News attention · GDELT</p>
+      <div className="flex items-center gap-2.5">
+        <span className="h-3 w-3 shrink-0 rounded-full border border-sky-300/70" />
+        <span className="text-[10px] text-slate-400">conflict-news mention (unverified)</span>
+      </div>
+      <p className="mt-2 text-[9px] leading-snug text-slate-600">
+        Two separate things. UCDP: analyst-<strong>verified</strong> fatal events, monthly with a
+        ~1-month lag — a place with no dots is <em>not yet verified</em>, not peaceful. GDELT:
+        machine-coded <strong>news mentions</strong> from the last 15 min — where news is written
+        about a place, <em>unverified</em>. Neither measures "tensions." Sources: UCDP (CC BY 4.0),
+        The GDELT Project.
+      </p>
+    </>
+  )
+}
+
 function FireLegend() {
   return (
     <>
@@ -376,6 +420,7 @@ const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
   quakes: QuakeLegend,
   aurora: AuroraLegend,
   flights: FlightLegend,
+  conflict: ConflictLegend,
 }
 
 export function Legend({

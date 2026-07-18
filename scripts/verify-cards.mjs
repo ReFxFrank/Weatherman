@@ -316,6 +316,50 @@ console.log('FLIGHTS globe — aircraft card (viewport-follow)')
 }
 
 // ---------------------------------------------------------------------------
+console.log('CONFLICT globe — verified event card')
+{
+  const page = await newPage({ width: 1280, height: 800 })
+  await page.goto(`${base}/?globe=conflict&quality=performance&lat=20&lon=35&z=2`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  })
+  const ready = await waitFor(page, () => {
+    const map = window.__emberMap
+    if (!map || !map.getSource('cf-ucdp')) return false
+    return /verified events/.test(document.body.innerText)
+  })
+  if (!ready) fail('conflict globe did not boot')
+  else {
+    // click the deadliest event in view (biggest dot, definitely present)
+    const target = await waitFor(page, () => {
+      const feats = window.__emberMap.querySourceFeatures('cf-ucdp')
+      if (!feats.length) return null
+      let best = feats[0]
+      for (const f of feats) if ((f.properties.deaths ?? 0) > (best.properties.deaths ?? 0)) best = f
+      const p = window.__emberMap.project(best.geometry.coordinates)
+      return { x: p.x, y: p.y, deaths: best.properties.deaths }
+    }, undefined, 20_000)
+    if (!target) skip('no conflict events in view to click')
+    else {
+      let sel = null
+      for (let attempt = 0; attempt < 3 && !sel; attempt++) {
+        await page.mouse.click(target.x, target.y)
+        await page.waitForTimeout(500)
+        sel = await page.evaluate(() => window.__emberStore.getState().selectedConflict)
+      }
+      if (sel?.kind) {
+        const t = await page.evaluate(() => document.body.innerText)
+        if (/CONFLICT EVENT|CONFLICT NEWS/.test(t) && /verified|UNVERIFIED/.test(t)) {
+          ok(`clicked event (${target.deaths} deaths) → ${sel.kind} card rendered`)
+          await page.screenshot({ path: 'verify-conflict-card.png' })
+        } else fail('conflict selected but card text missing')
+      } else fail('conflict click selected nothing')
+    }
+  }
+  await page.close()
+}
+
+// ---------------------------------------------------------------------------
 console.log('MOBILE bottom sheet — per-globe tabs')
 {
   const page = await newPage({ width: 375, height: 812 })

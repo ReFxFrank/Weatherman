@@ -739,11 +739,60 @@ airspace/FIR layer.
   flag (mirroring `quakesStale`) now dims them. (4) Airborne aircraft with **no
   reported altitude** were colored amber (the "on the deck" stop) — now a
   distinct neutral slate.
-- **Deferred (still on the shelf, per Frank's decisions)**: the **openAIP
-  airspace/FIR** layer beneath the aircraft (static, bakes honestly — needs
-  their keyless open-data path resolved, since the API is key-gated), and the
-  **armed-conflict globe** (UCDP verified events, baked + CC BY, re-scoped
-  from "war/tensions" which no dataset measures; plus a separate, clearly
-  labeled GDELT "conflict news attention" live layer — GDELT's raw 15-min
-  feed is confirmed but needs a bake/proxy, and UCDP's keyless bulk-download
-  path still needs resolving vs its token-gated API).
+- **Deferred (per Frank's decisions, now being built)**: the **openAIP
+  airspace/FIR** layer, and the **armed-conflict globe** — see Phase 13.
+
+
+## Phase 13 notes — the armed-conflict globe (UCDP + GDELT)
+
+Frank asked for a "war / rising tensions" globe. A feasibility research pass
+established that no license-clean source is simultaneously live, verified,
+AND global, and that "tensions" is not measured by any of them — so the
+globe was **re-scoped to "Armed conflict"** and built from two epistemically
+distinct sources, kept visually and semantically **separate, never merged**.
+
+- **UCDP GED-Candidate → the honest core.** Analyst-**verified** events of
+  organized violence (≥1 reported death), geo-coded, CC BY 4.0, keyless bulk
+  CSV. It is authoritative but **monthly with a ~1-month lag** — NOT live; the
+  newest verified events are weeks old, and a place with no dots is "not yet
+  verified", not peaceful. `server/conflict.ts` probes the candidate versions
+  (`GEDEvent_vYY_0_N.csv`) so the monthly bump is picked up without a code
+  change, parses a full quote-AND-embedded-newline-aware CSV (UCDP source
+  fields contain both), filters to fatal + last ~400 days, caps at 9k newest.
+  Rendered as warm solid dots colored by violence type (state-based /
+  non-state / one-sided) and **sized by death toll**.
+- **GDELT 2.0 → a separate, clearly-labeled news layer.** Machine-coded
+  conflict-related **NEWS** events (QuadClass 4 / CAMEO roots 18–20), refreshed
+  every 15 min, **UNVERIFIED** — a point marks where news is being *written
+  about* a place (algorithmic geolocation + event coding), not a confirmed
+  event (the parse even surfaces the odd mis-coded old article — exactly why
+  it's labeled unverified). Downloaded as a zipped tab-CSV and unzipped with
+  `fflate` (already a dep), deduped by ~11 km cell. Rendered as faint hollow
+  cool rings, deliberately secondary. Neither layer is called "war" or
+  "tensions"; the legend distinguishes the two epistemically.
+- **Declined (documented like MeteoAlarm/Blitzortung)**: **ACLED** — its EULA
+  forbids public dashboards / third-party direct access and is credential-
+  gated. **Ukraine air-raid APIs** — token-gated, single-country, unverifiable
+  redistribution terms.
+- **Architecture**: unlike the other recent globes this needs the server side
+  (GDELT's zip has no browser CORS; UCDP is a bulk CSV), so it rides the Hono
+  proxy (`/api/conflict`) in live mode and the bake (`conflict.json`) in static
+  mode — the severe/hurricanes pattern. `server/conflict.ts` keeps a UCDP 6 h
+  sub-cache (monthly data) under the 10-min payload cache, a `degraded[]` array
+  (UCDP / GDELT degrade independently), a `lastGood` guard against degraded
+  builds, and the bake prefers a complete previous deploy over a degraded-fresh
+  one. The refuse-to-deploy guard now counts `conflict` too.
+- **Honesty everywhere**: HUD "N verified events · N deaths · N news"; subline
+  "UCDP verified (monthly, ~1mo lag) + GDELT news (15 min, unverified) · blank
+  ≠ peace"; the verified card says "verified · UCDP" with the CC-BY provenance
+  and flags coarse geo-precision as "approx."; the news card is headed
+  "CONFLICT NEWS" and says "UNVERIFIED … where news is written ABOUT a place".
+  Footer credits "Armed conflict: UCDP (CC BY 4.0) + GDELT". `headless-check`
+  gained the `cf-` prefix; `verify-cards` clicks the deadliest event in view
+  and asserts the verified card.
+- **Still deferred**: the **openAIP airspace/FIR** layer on the flights globe.
+  Research finding: openAIP's per-country airspace files are impractical at
+  scale (the US file alone is **495 MB** and mixes all classes), so the airspace
+  layer will instead use a small clean global **FIR/UIR boundary** GeoJSON
+  (OpenAviation / Eurocontrol-atlas world file) as static reference lines
+  beneath the aircraft — next increment.

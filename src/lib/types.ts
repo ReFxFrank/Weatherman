@@ -404,6 +404,55 @@ export interface FlightsData {
  *  snapshot at render time (a plane that leaves the view closes its card). */
 export type AircraftSelection = { hex: string }
 
+// ---------------------------------------------------------------------------
+// Armed conflict (UCDP + GDELT) — mirrors server/conflict.ts. Two distinct,
+// never-merged layers: UCDP verified fatal events, GDELT unverified news.
+// ---------------------------------------------------------------------------
+
+export interface ConflictEvent {
+  /** UCDP event id (stable across polls) */
+  id: string
+  lat: number
+  lon: number
+  /** best estimate of deaths (UCDP `best`) */
+  deaths: number
+  /** 1 = state-based, 2 = non-state, 3 = one-sided (against civilians) */
+  type: number
+  country: string
+  /** event start date, YYYY-MM-DD */
+  date: string
+  /** UCDP geocoding precision, 1 (exact) … 7 (country) */
+  wherePrec: number
+}
+
+export interface NewsEvent {
+  /** GDELT GlobalEventID (stable within a slice) */
+  id: string
+  lat: number
+  lon: number
+  tone: number
+  place: string
+  url: string
+}
+
+export interface ConflictPayload {
+  source: 'ucdp-gdelt'
+  mode: 'live' | 'baked'
+  fetchedAt: string
+  ucdp: { version: string; events: ConflictEvent[] }
+  gdelt: { at: string; events: NewsEvent[] }
+  counts: { verified: number; verifiedTotal: number; verifiedDeaths: number; news: number }
+  stale?: boolean
+  degraded?: string[]
+}
+
+/** A clicked conflict feature, keyed by STABLE id (not array index — the
+ *  payload arrays are replaced wholesale on every poll), resolved against the
+ *  current payload at render time so a refetch that drops it closes the card. */
+export type ConflictSelection =
+  | { kind: 'ucdp'; id: string }
+  | { kind: 'news'; id: string }
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

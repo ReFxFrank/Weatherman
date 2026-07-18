@@ -3,6 +3,7 @@ import { decodeLightningBinary } from './lightningBinary'
 import type {
   Aircraft,
   AuroraPayload,
+  ConflictPayload,
   DecodedFire,
   DecodedLightning,
   EonetEvent,
@@ -377,6 +378,39 @@ export async function fetchAircraft(lat: number, lon: number, radiusNm: number):
     aircraft,
     count: aircraft.length,
   }
+}
+
+/**
+ * Armed conflict (UCDP verified events + GDELT conflict news). Needs the
+ * server side (GDELT is a zipped feed with no browser CORS; UCDP is a bulk
+ * CSV), so — like severe/hurricanes — it rides the proxy in live mode and the
+ * bake in static mode. UCDP is monthly, GDELT 15-min; poll on the fire cadence.
+ */
+export const CONFLICT_REFRESH_MS = STATIC_MODE ? REFRESH_MS : 5 * 60_000
+
+export async function fetchConflict(): Promise<ConflictPayload> {
+  const url = STATIC_MODE
+    ? `${import.meta.env.BASE_URL}data/conflict.json?v=${cacheTick()}`
+    : '/api/conflict'
+  const res = await fetch(url)
+  if (!res.ok) {
+    if (STATIC_MODE) {
+      throw new Error(
+        res.status === 404
+          ? 'conflict data not in the baked feed yet (next Pages deploy adds it)'
+          : `conflict request failed (${res.status})`,
+      )
+    }
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = typeof body?.error === 'string' ? body.error : ''
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail || `conflict request failed (${res.status})`)
+  }
+  return res.json()
 }
 
 export interface HealthInfo {
