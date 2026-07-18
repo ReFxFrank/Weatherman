@@ -79,7 +79,7 @@ export const GLOBE_DEFS = [
     Icon: Plane,
     activeCls: 'border-indigo-400/40 bg-indigo-400/15 text-indigo-300',
     feedName: 'ADS-B FEED',
-    attribution: 'Live aircraft: airplanes.live (non-commercial)',
+    attribution: 'Live aircraft: airplanes.live (non-commercial) · FIR: Eurocontrol (MIT)',
   },
   {
     id: 'conflict',

@@ -299,12 +299,18 @@ function FlightLegend(_props: { hasMtg?: boolean }) {
           <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-[8px] text-amber-300">MIL</span>
           <span className="text-[10px] text-slate-400">military · grey when on the ground</span>
         </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-0 w-3.5 shrink-0 border-t border-dashed border-indigo-400/50" />
+          <span className="text-[10px] text-slate-400">FIR boundaries · Europe only</span>
+        </div>
         <p className="text-[9px] leading-snug text-slate-600">
           Live ADS-B from <strong>airplanes.live</strong> community receivers (non-commercial),
           positions ~seconds old. Shows the <strong>current view only</strong> (≈250 nm around
           center) — zoom into a region to load. Blank areas mean no receiver coverage, not empty
           sky; oceans and much of Africa/Asia are sparse. Route/airline schedule isn&apos;t in
-          ADS-B. Source: airplanes.live.
+          ADS-B. Faint dashed lines are European flight-information-region boundaries (Eurocontrol,
+          MIT) — clean-licensed global FIR data doesn&apos;t exist, so they&apos;re Europe-only.
+          Sources: airplanes.live, Eurocontrol.
         </p>
       </div>
     </>

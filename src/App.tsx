@@ -8,6 +8,7 @@ import {
   fetchAurora,
   fetchConflict,
   fetchEonetEvents,
+  fetchEuFirs,
   fetchFireDecoded,
   fetchHurricanes,
   fetchLightningDecoded,
@@ -443,6 +444,15 @@ export default function App() {
     queryFn: fetchEonetEvents,
     staleTime: REFRESH_MS,
     refetchInterval: REFRESH_MS,
+  })
+
+  // European FIR boundaries: a static reference layer under the aircraft,
+  // fetched once on first flights-globe view and cached forever.
+  const { data: firs } = useQuery({
+    queryKey: ['eu-firs'],
+    queryFn: fetchEuFirs,
+    enabled: globe === 'flights',
+    staleTime: Infinity,
   })
 
   // US perimeters (Phase 5): fetched lazily on first toggle, kept 30 min.
@@ -982,6 +992,7 @@ export default function App() {
         flights={globe === 'flights' && flightsView ? flightsData : undefined}
         flightTrail={globe === 'flights' && flightsView ? flightTrail : null}
         flightsStale={flightsStale}
+        firs={globe === 'flights' ? (firs ?? null) : null}
         conflict={globe === 'conflict' ? conflictData : undefined}
         entranceReady={entranceReady}
         events={events}

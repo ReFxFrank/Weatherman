@@ -413,6 +413,25 @@ export async function fetchConflict(): Promise<ConflictPayload> {
   return res.json()
 }
 
+/**
+ * European FIR (Flight Information Region) boundaries — a static reference
+ * layer beneath the aircraft. From the Eurocontrol PRU "atlas" (MIT-licensed,
+ * re-servable with attribution). Clean-licensed GLOBAL FIR boundaries don't
+ * exist, so this is Europe-only — honestly labeled; it happens to cover one
+ * of the two densest ADS-B regions. Committed as a static TopoJSON, fetched
+ * lazily and converted client-side (topojson-client is already a dep).
+ */
+export async function fetchEuFirs(): Promise<GeoJSON.FeatureCollection> {
+  const res = await fetch(`${import.meta.env.BASE_URL}eu-firs.topo.json`)
+  if (!res.ok) throw new Error(`FIR boundaries fetch failed (${res.status})`)
+  const topo = (await res.json()) as { objects: { firs: unknown } }
+  const { feature } = await import('topojson-client')
+  return feature(
+    topo as unknown as Parameters<typeof feature>[0],
+    topo.objects.firs as Parameters<typeof feature>[1],
+  ) as unknown as GeoJSON.FeatureCollection
+}
+
 export interface HealthInfo {
   ok: boolean
   hasKey: boolean

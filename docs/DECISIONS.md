@@ -796,3 +796,24 @@ distinct sources, kept visually and semantically **separate, never merged**.
   layer will instead use a small clean global **FIR/UIR boundary** GeoJSON
   (OpenAviation / Eurocontrol-atlas world file) as static reference lines
   beneath the aircraft — next increment.
+
+
+## Phase 13b — FIR airspace layer (Eurocontrol)
+
+The second half of Frank's flights ask ("view the airspace over countries").
+
+- **openAIP was ruled out** (per-country files are impractical: the US file
+  alone is 495 MB and mixes all classes). Clean-licensed **global** FIR
+  boundaries turn out not to exist — the honest finding. The clean regional
+  options are **Europe** (Eurocontrol PRU "atlas", **MIT**-licensed) and the
+  **US** (FAA, public domain) — which happen to be the two densest ADS-B
+  regions. Shipped the Europe set now; US could follow.
+- **Data**: `topo/euctrl/euctrl.json` from the eurocontrol-atlas repo — 88 KB,
+  83 named FIRs, committed as a static `public/eu-firs.topo.json`, fetched
+  lazily on first flights-globe view and converted client-side with
+  `topojson-client` (already a dep, the choropleth uses it).
+- **Render** (`firLayers.ts`): faint dashed indigo FIR outlines + uppercase
+  names, drawn BENEATH the plane layers (by insertion order in
+  `syncNativeLayers`) as geographic control-region context. Display-only, no
+  picking. Legend + footer credit Eurocontrol (MIT) and say plainly it's
+  **Europe-only** because clean global FIR data doesn't exist.

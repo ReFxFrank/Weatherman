@@ -96,7 +96,7 @@ const layers = await page.evaluate(() => {
   if (!map) return null // production build: DEV hooks absent
   const out = []
   for (const l of map.getStyle().layers ?? []) {
-    if (!/^(hur|svr|eq|aur|flt|cf|glm|terminator|eonet|ember)-/.test(l.id)) continue
+    if (!/^(hur|svr|eq|aur|flt|fir|cf|glm|terminator|eonet|ember)-/.test(l.id)) continue
     const vis = map.getLayoutProperty(l.id, 'visibility') ?? 'visible'
     // queryRenderedFeatures on a symbol layer can throw mid-glyph-load — one
     // fragile layer must not abort the whole report
