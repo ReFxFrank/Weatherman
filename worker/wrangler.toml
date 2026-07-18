@@ -1,0 +1,6 @@
+name = "ember-photo-proxy"
+main = "photo-proxy.js"
+compatibility_date = "2025-01-01"
+
+# Deploy: cd worker && npx wrangler deploy
+# Local test: npx wrangler dev   (then curl 'http://localhost:8787/?hex=4ca853')

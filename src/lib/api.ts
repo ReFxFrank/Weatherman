@@ -461,14 +461,25 @@ export async function fetchRoute(callsign: string): Promise<FlightRoute | null> 
 }
 
 /**
- * Aircraft photo by hex, via the proxy (planespotters requires a server-set
- * User-Agent with a contact URL, which browsers cannot send — so this needs
- * /api and returns null in static Pages mode, hiding the photo cleanly).
+ * Aircraft photo by hex. planespotters requires a server-set User-Agent with a
+ * contact URL, which browsers cannot send — so it MUST be proxied:
+ * - dev / VPS mode → the Hono `/api/aircraft-photo` route.
+ * - static Pages mode → the Cloudflare Worker at VITE_PHOTO_PROXY (see
+ *   `worker/`); if that build var is unset, no proxy exists → no photo, and
+ *   the card hides it cleanly.
+ * The returned thumbnail URL then loads directly in an <img> on any origin.
  */
+const PHOTO_PROXY = (import.meta.env.VITE_PHOTO_PROXY as string | undefined)?.replace(/\/+$/, '')
 export async function fetchAircraftPhoto(hex: string): Promise<AircraftPhoto | null> {
-  if (STATIC_MODE || !hex) return null // no server on Pages
+  if (!hex) return null
+  const url = STATIC_MODE
+    ? PHOTO_PROXY
+      ? `${PHOTO_PROXY}/?hex=${encodeURIComponent(hex)}`
+      : null
+    : `/api/aircraft-photo?hex=${encodeURIComponent(hex)}`
+  if (!url) return null
   try {
-    const res = await fetch(`/api/aircraft-photo?hex=${encodeURIComponent(hex)}`)
+    const res = await fetch(url)
     if (!res.ok) return null
     const j = (await res.json()) as AircraftPhoto | { photo: null }
     return 'thumb' in j && j.thumb ? j : null

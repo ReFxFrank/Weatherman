@@ -94,6 +94,11 @@ jobs:
       - run: npm ci
 
       - name: Build SPA in static-data mode
+        # VITE_PHOTO_PROXY (optional): the Cloudflare Worker URL from repo
+        # variable PHOTO_PROXY_URL — lights up aircraft photos on the flights
+        # globe. Unset → photos are simply hidden. See worker/.
+        env:
+          VITE_PHOTO_PROXY: ${{ vars.PHOTO_PROXY_URL }}
         run: VITE_BASE="/${GITHUB_REPOSITORY#*/}/" VITE_DATA_MODE=static npm run build
 
       - name: Bake live FIRMS data

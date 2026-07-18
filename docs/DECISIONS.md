@@ -846,3 +846,36 @@ labeled as NOT-from-ADS-B.
   Planespotters with a link, as their terms require.
 - Honesty: the card footer states plainly that position/altitude/speed are
   live ADS-B while the route/airline and photo are external lookups.
+
+
+## Phase 14b — aircraft photos on static Pages via a Cloudflare Worker
+
+Phase 14 left the aircraft photo working only in proxy/VPS mode because the
+User-Agent requirement needs a *server*. Rather than leave it dark on the live
+Pages site, added the smallest possible server: a Cloudflare Worker (`worker/`,
+free tier — 100k req/day, 24 h edge cache).
+
+- **`worker/photo-proxy.js`** mirrors the Hono `/api/aircraft-photo` route
+  exactly: validate `hex` against `/^[0-9a-f]{6}$/`, call planespotters with
+  the compliant UA `Ember-hazard-globes/1.0 (+https://github.com/ReFxFrank/
+  Weatherman)`, return `{thumb, link, photographer}` (or `{photo:null}`) with
+  `Access-Control-Allow-Origin: *` so github.io can read it. The image itself
+  (`t.plnspttrs.net/…`) then loads directly in the `<img>`. Verified locally
+  with `wrangler dev`: real hex → the Ryanair 737 photo JSON, bad hex →
+  `{photo:null}`, OPTIONS → CORS headers.
+- **Client** (`api.ts` `fetchAircraftPhoto`): in `STATIC_MODE` it now hits
+  `VITE_PHOTO_PROXY` if that build var is set, else returns null (photo stays
+  hidden — no broken image). Proxy/VPS mode is unchanged (`/api/...`).
+- **Wiring** (`pages.yml`): the build reads repo Actions *variable*
+  `PHOTO_PROXY_URL` into `VITE_PHOTO_PROXY`. Unset → photos simply stay hidden,
+  so the build never depends on the Worker existing.
+- **Two account-scoped steps Frank must run once** (can't be automated by this
+  token — they touch his Cloudflare + GitHub accounts):
+  1. `cd worker && npx wrangler deploy` → prints
+     `https://ember-photo-proxy.<subdomain>.workers.dev`
+  2. Repo → Settings → Secrets and variables → Actions → **Variables** → New
+     variable `PHOTO_PROXY_URL` = that URL. Next Pages build lights up photos.
+- **Why a Worker and not a Pages Function**: the site is deployed by the Pages
+  *Actions* workflow (upload-pages-artifact), not Cloudflare Pages, so there's
+  no Functions runtime in this deploy. A standalone Worker is independent of
+  the host and portable if the deploy target ever changes.

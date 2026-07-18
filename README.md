@@ -26,7 +26,7 @@ Mission-control aesthetics, GPU rendering, real data only.
 | **10 — Earthquakes globe** | live USGS all-day feed (keyless, CORS-open, client-fetched every minute), magnitude-scaled glow + core + animated ripple, M≥6 labels, seismic color ramp, click-to-inspect detail card (depth/felt/tsunami/USGS link), instrumentation-bias coverage legend | ✅ done |
 | **11 — Aurora globe** | NOAA SWPC OVATION forecast field (keyless, CORS-open, ~5-min grid), green auroral-oval glow at both poles with a gentle shimmer, honestly labeled as a probability forecast (not observed), pairs with the night-side terminator | ✅ done |
 | **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, trails, data-block labels, emergency/military highlighting, click-to-inspect detail card, coverage-honest | ✅ done |
-| **12b — Flight route + photo** | click a plane → scheduled great-circle route (adsbdb, client-direct) + real aircraft photo (Planespotters, proxied) + European FIR boundaries; all labeled NOT-from-ADS-B | ✅ done (photo needs proxy/VPS mode; hidden on static Pages) |
+| **12b — Flight route + photo** | click a plane → scheduled great-circle route (adsbdb, client-direct) + real aircraft photo (Planespotters, proxied) + European FIR boundaries; all labeled NOT-from-ADS-B | ✅ done (photo lights up on static Pages via the `worker/` Cloudflare Worker once `PHOTO_PROXY_URL` is set; hidden until then) |
 | **13 — Armed-conflict globe** | UCDP verified fatal events (CC BY, monthly, sized by death toll) + a separate labeled GDELT conflict-news layer (15-min, unverified), proxy/bake (server-side unzip), distinct rendering + cards, strong verified-vs-unverified honesty | ✅ done |
 
 ## Stack
@@ -83,6 +83,15 @@ One-time setup:
 Site URL: `https://<user>.github.io/<repo>/`. Data freshness is the cron
 cadence (+ queue jitter) on top of FIRMS's own ~1h NRT latency; tune the cron
 in the workflow, staying under Pages' ~10 deploys/hour soft limit.
+
+**Optional — aircraft photos on the flights globe.** planespotters needs a
+server-set `User-Agent` browsers can't send, so on the serverless Pages deploy
+photos come from a tiny Cloudflare Worker (`worker/`, free tier). One time:
+`cd worker && npx wrangler deploy` (prints an `…workers.dev` URL), then add repo
+**Settings → Secrets and variables → Actions → Variables** → `PHOTO_PROXY_URL` =
+that URL. The next Pages build injects it as `VITE_PHOTO_PROXY` and photos
+appear; leave it unset and the card simply hides the photo. See `worker/README`
+header comment and `docs/DECISIONS.md` Phase 14b.
 
 ### Ubuntu VPS (live proxy — freshest mode)
 
