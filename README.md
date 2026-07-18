@@ -25,8 +25,9 @@ Mission-control aesthetics, GPU rendering, real data only.
 | **9 — Honesty hardening + detail cards** | severe `degraded` marker (SPC outage ≠ quiet day), NWS expiry-offset comparison fix, mobile Display/Legend sheet on every globe, click-to-inspect detail cards for warnings/watches/reports and storm heads/forecast points, interaction-verification harness (`verify-cards.mjs`) | ✅ done |
 | **10 — Earthquakes globe** | live USGS all-day feed (keyless, CORS-open, client-fetched every minute), magnitude-scaled glow + core + animated ripple, M≥6 labels, seismic color ramp, click-to-inspect detail card (depth/felt/tsunami/USGS link), instrumentation-bias coverage legend | ✅ done |
 | **11 — Aurora globe** | NOAA SWPC OVATION forecast field (keyless, CORS-open, ~5-min grid), green auroral-oval glow at both poles with a gentle shimmer, honestly labeled as a probability forecast (not observed), pairs with the night-side terminator | ✅ done |
-| **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, click-to-inspect detail card, coverage-honest ("blank = no receiver coverage") | ✅ done |
-| **13 — Armed-conflict globe** | UCDP verified fatal events (CC BY, monthly, sized by death toll) + a separate labeled GDELT conflict-news layer (15-min, unverified), proxy/bake (server-side unzip), distinct rendering + cards, strong verified-vs-unverified honesty | ✅ done (FIR airspace layer next, see DECISIONS) |
+| **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, trails, data-block labels, emergency/military highlighting, click-to-inspect detail card, coverage-honest | ✅ done |
+| **12b — Flight route + photo** | click a plane → scheduled great-circle route (adsbdb, client-direct) + real aircraft photo (Planespotters, proxied) + European FIR boundaries; all labeled NOT-from-ADS-B | ✅ done (photo needs proxy/VPS mode; hidden on static Pages) |
+| **13 — Armed-conflict globe** | UCDP verified fatal events (CC BY, monthly, sized by death toll) + a separate labeled GDELT conflict-news layer (15-min, unverified), proxy/bake (server-side unzip), distinct rendering + cards, strong verified-vs-unverified honesty | ✅ done |
 
 ## Stack
 
@@ -141,6 +142,7 @@ Lightning Imager** ·
 Severe weather: **NOAA NWS / SPC** · Hurricanes: **NOAA NHC** ·
 Earthquakes: **USGS** · Aurora: **NOAA SWPC** (OVATION) ·
 Live aircraft: **airplanes.live** (community ADS-B, non-commercial) ·
+Routes: **adsbdb** · Aircraft photos: **Planespotters** · FIR: **Eurocontrol** (MIT) ·
 Armed conflict: **UCDP** (CC BY 4.0) + **GDELT** ·
 Named events & global storms: **NASA EONET** · Basemap:
 © [CARTO](https://carto.com/attributions), © OpenStreetMap contributors.

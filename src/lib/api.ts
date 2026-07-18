@@ -2,11 +2,13 @@ import { decodeFireBinary } from './binary'
 import { decodeLightningBinary } from './lightningBinary'
 import type {
   Aircraft,
+  AircraftPhoto,
   AuroraPayload,
   ConflictPayload,
   DecodedFire,
   DecodedLightning,
   EonetEvent,
+  FlightRoute,
   FlightsData,
   HurricanePayload,
   Quake,
@@ -411,6 +413,68 @@ export async function fetchConflict(): Promise<ConflictPayload> {
     throw new Error(detail || `conflict request failed (${res.status})`)
   }
   return res.json()
+}
+
+/**
+ * Scheduled flight route (origin → destination) by callsign, from adsbdb —
+ * keyless, CORS-open, client-direct. This is the SCHEDULED route from a route
+ * database, NOT the ADS-B-broadcast path, so it's labeled that way and can be
+ * absent/stale. Returns null when the callsign is unknown.
+ */
+interface RawRouteAirport {
+  iata_code?: string
+  icao_code?: string
+  latitude?: number
+  longitude?: number
+  name?: string
+  municipality?: string
+}
+export async function fetchRoute(callsign: string): Promise<FlightRoute | null> {
+  if (!callsign) return null
+  const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`route lookup failed (${res.status})`)
+  const j = (await res.json()) as {
+    response?: { flightroute?: { airline?: { name?: string }; origin?: RawRouteAirport; destination?: RawRouteAirport } } | string
+  }
+  const fr = typeof j.response === 'object' ? j.response?.flightroute : undefined
+  const o = fr?.origin
+  const d = fr?.destination
+  if (
+    !o ||
+    !d ||
+    !Number.isFinite(o.latitude) ||
+    !Number.isFinite(o.longitude) ||
+    !Number.isFinite(d.latitude) ||
+    !Number.isFinite(d.longitude)
+  )
+    return null
+  const ap = (a: RawRouteAirport): FlightRoute['origin'] => ({
+    iata: a.iata_code ?? '',
+    icao: a.icao_code ?? '',
+    lat: a.latitude as number,
+    lon: a.longitude as number,
+    name: a.name ?? '',
+    municipality: a.municipality ?? '',
+  })
+  return { airline: fr?.airline?.name ?? '', origin: ap(o), destination: ap(d) }
+}
+
+/**
+ * Aircraft photo by hex, via the proxy (planespotters requires a server-set
+ * User-Agent with a contact URL, which browsers cannot send — so this needs
+ * /api and returns null in static Pages mode, hiding the photo cleanly).
+ */
+export async function fetchAircraftPhoto(hex: string): Promise<AircraftPhoto | null> {
+  if (STATIC_MODE || !hex) return null // no server on Pages
+  try {
+    const res = await fetch(`/api/aircraft-photo?hex=${encodeURIComponent(hex)}`)
+    if (!res.ok) return null
+    const j = (await res.json()) as AircraftPhoto | { photo: null }
+    return 'thumb' in j && j.thumb ? j : null
+  } catch {
+    return null
+  }
 }
 
 /**

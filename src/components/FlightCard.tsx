@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { altColor } from '../lib/flightLayers'
-import type { Aircraft } from '../lib/types'
+import type { Aircraft, AircraftPhoto, FlightRoute } from '../lib/types'
 import { glass } from './ui'
 
 /**
@@ -64,10 +64,14 @@ const compass = (deg: number) => COMPASS[Math.round((((deg % 360) + 360) % 360) 
 
 export function FlightCard({
   aircraft,
+  route = null,
+  photo = null,
   onClose,
   className = 'w-72',
 }: {
   aircraft: Aircraft
+  route?: FlightRoute | null
+  photo?: AircraftPhoto | null
   onClose: () => void
   className?: string
 }) {
@@ -104,6 +108,25 @@ export function FlightCard({
       </header>
 
       <div className="px-4 pb-3 pt-2">
+        {photo?.thumb && (
+          <a
+            href={photo.link || undefined}
+            target="_blank"
+            rel="noreferrer"
+            className="mb-2 block overflow-hidden rounded-md border border-white/10"
+            title="View on Planespotters"
+          >
+            <img
+              src={photo.thumb}
+              alt={`${aircraft.reg || aircraft.type || 'aircraft'} photo`}
+              className="h-28 w-full object-cover"
+              loading="lazy"
+            />
+            <span className="block bg-black/40 px-2 py-0.5 text-[8px] text-slate-400">
+              © {photo.photographer || 'unknown'} · Planespotters · photo of {aircraft.reg || 'this reg'}
+            </span>
+          </a>
+        )}
         {aircraft.isEmergency && (
           <div className="mb-2 flex items-center gap-1.5 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] text-red-300">
             <ShieldAlert className="h-3 w-3 shrink-0" />
@@ -130,6 +153,24 @@ export function FlightCard({
           {aircraft.desc || aircraft.type || 'aircraft'}
           {aircraft.category && CATEGORY[aircraft.category] ? ` · ${CATEGORY[aircraft.category]}` : ''}
         </p>
+
+        {route && (
+          <div className="mt-2">
+            <div className="flex items-center gap-1.5 rounded border border-indigo-500/20 bg-indigo-500/5 px-2 py-1 font-mono text-[11px]">
+              <span className="font-semibold text-indigo-200">{route.origin.iata || route.origin.icao || '???'}</span>
+              <Plane className="h-3 w-3 shrink-0 rotate-90 text-indigo-300" />
+              <span className="font-semibold text-indigo-200">
+                {route.destination.iata || route.destination.icao || '???'}
+              </span>
+              {route.airline && (
+                <span className="truncate text-[10px] text-slate-500"> · {route.airline}</span>
+              )}
+            </div>
+            <p className="mt-0.5 px-1 text-[9px] text-slate-600">
+              scheduled route (adsbdb) — estimated from the callsign, not the ADS-B path
+            </p>
+          </div>
+        )}
 
         <div className="mt-3 space-y-1.5 font-mono text-[11px] text-slate-400">
           {aircraft.gsKt !== null && (
@@ -186,8 +227,9 @@ export function FlightCard({
         </div>
 
         <p className="mt-2 border-t border-white/5 pt-2 text-[9px] leading-snug text-slate-600">
-          Live ADS-B via airplanes.live (community receivers), ~seconds old. Route/airline
-          schedule isn&apos;t broadcast over ADS-B, so it isn&apos;t shown.
+          Position/altitude/speed are live ADS-B via airplanes.live (community receivers), ~seconds
+          old. The route/airline and photo are NOT from ADS-B — the route is a scheduled lookup
+          (adsbdb), the photo a library shot of the registration (Planespotters).
         </p>
       </div>
     </aside>

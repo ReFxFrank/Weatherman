@@ -817,3 +817,32 @@ The second half of Frank's flights ask ("view the airspace over countries").
   `syncNativeLayers`) as geographic control-region context. Display-only, no
   picking. Legend + footer credit Eurocontrol (MIT) and say plainly it's
   **Europe-only** because clean global FIR data doesn't exist.
+
+
+## Phase 14 — flight route + aircraft photo (FlightRadar polish)
+
+Frank asked for FlightRadar's click-a-plane extras: the flight path and a
+real photo. Neither is in ADS-B, so both are external lookups, honestly
+labeled as NOT-from-ADS-B.
+
+- **Scheduled route** (`api.ts` `fetchRoute` + `routeLayers.ts`): **adsbdb**
+  by callsign — keyless, CORS-open, so it's **client-direct and works on the
+  static Pages site**. Draws a **great-circle arc** (slerp) origin→destination
+  + airport dots/labels beneath the planes, split at the antimeridian. The
+  card shows `LHR ✈ JFK · airline` with "scheduled route (adsbdb) — estimated
+  from the callsign, not the ADS-B path". Query keyed on the callsign so it
+  doesn't refetch on the 6 s position poll.
+- **Aircraft photo** (`/api/aircraft-photo` + `fetchAircraftPhoto`):
+  **planespotters**, but their API rejects any request whose User-Agent lacks
+  a contact URL — and **browsers cannot set `User-Agent`** — so it MUST be
+  proxied. The Hono route holds a compliant UA and returns just the thumbnail
+  metadata (the `t.plnspttrs.net` image itself loads fine in an `<img>` on any
+  origin). **Consequence: the photo works in the proxy/VPS mode but NOT on the
+  static GitHub Pages deploy** — `fetchAircraftPhoto` returns null in
+  `STATIC_MODE`, so the card simply hides the photo there (no broken image).
+  To light it up on Pages later, add a tiny serverless photo-proxy (a
+  Cloudflare Worker/Pages Function). The card labels it a **library photo of
+  the registration** (not this exact flight) and credits the photographer +
+  Planespotters with a link, as their terms require.
+- Honesty: the card footer states plainly that position/altitude/speed are
+  live ADS-B while the route/airline and photo are external lookups.

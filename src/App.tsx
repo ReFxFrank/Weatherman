@@ -5,10 +5,12 @@ import {
   AURORA_REFRESH_MS,
   CONFLICT_REFRESH_MS,
   fetchAircraft,
+  fetchAircraftPhoto,
   fetchAurora,
   fetchConflict,
   fetchEonetEvents,
   fetchEuFirs,
+  fetchRoute,
   fetchFireDecoded,
   fetchHurricanes,
   fetchLightningDecoded,
@@ -452,6 +454,26 @@ export default function App() {
     queryKey: ['eu-firs'],
     queryFn: fetchEuFirs,
     enabled: globe === 'flights',
+    staleTime: Infinity,
+  })
+
+  // Selected aircraft's SCHEDULED route (adsbdb) — keyed on the callsign so it
+  // doesn't refetch on every 6 s position poll; client-direct, honestly
+  // labeled "scheduled". null when the callsign is unknown.
+  const selectedCallsign = resolvedAircraft?.flight ?? ''
+  const { data: route } = useQuery({
+    queryKey: ['route', selectedCallsign],
+    queryFn: () => fetchRoute(selectedCallsign),
+    enabled: globe === 'flights' && selectedCallsign.length > 0,
+    staleTime: 5 * 60_000,
+  })
+
+  // Aircraft photo (planespotters via proxy) — null on the static Pages build.
+  const selectedHexForPhoto = selectedAircraft?.hex ?? ''
+  const { data: aircraftPhoto } = useQuery({
+    queryKey: ['aircraft-photo', selectedHexForPhoto],
+    queryFn: () => fetchAircraftPhoto(selectedHexForPhoto),
+    enabled: globe === 'flights' && selectedHexForPhoto.length > 0,
     staleTime: Infinity,
   })
 
@@ -993,6 +1015,7 @@ export default function App() {
         flightTrail={globe === 'flights' && flightsView ? flightTrail : null}
         flightsStale={flightsStale}
         firs={globe === 'flights' ? (firs ?? null) : null}
+        route={globe === 'flights' ? (route ?? null) : null}
         conflict={globe === 'conflict' ? conflictData : undefined}
         entranceReady={entranceReady}
         events={events}
@@ -1042,6 +1065,8 @@ export default function App() {
       ) : globe === 'flights' && resolvedAircraft ? (
         <FlightCard
           aircraft={resolvedAircraft}
+          route={route ?? null}
+          photo={aircraftPhoto ?? null}
           onClose={() => setEmber({ selectedAircraft: null })}
           className={CARD_POS}
         />

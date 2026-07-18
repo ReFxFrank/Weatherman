@@ -173,6 +173,41 @@ app.get('/api/conflict', async (c) => {
   }
 })
 
+/**
+ * Aircraft photo by ICAO hex, proxied from planespotters — their API rejects
+ * requests whose User-Agent lacks a contact URL (which browsers can't set),
+ * so this proxy holds a compliant UA. The returned thumbnail URL loads fine in
+ * an <img> on any origin. Only available in proxy/VPS mode; the static Pages
+ * build has no server, so the client hides the photo there.
+ */
+app.get('/api/aircraft-photo', async (c) => {
+  const hex = (c.req.query('hex') ?? '').trim().toLowerCase()
+  if (!/^[0-9a-f]{6}$/.test(hex)) return c.json({ photo: null })
+  try {
+    const res = await fetch(`https://api.planespotters.net/pub/photos/hex/${hex}`, {
+      headers: {
+        'User-Agent': 'Ember-hazard-globes/1.0 (+https://github.com/ReFxFrank/Weatherman)',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return c.json({ photo: null })
+    const j = (await res.json()) as {
+      photos?: Array<{ thumbnail_large?: { src: string }; thumbnail?: { src: string }; link?: string; photographer?: string }>
+    }
+    const p = j.photos?.[0]
+    if (!p) return c.json({ photo: null })
+    c.header('Cache-Control', 'public, max-age=86400')
+    return c.json({
+      thumb: (p.thumbnail_large ?? p.thumbnail)?.src ?? '',
+      link: p.link ?? '',
+      photographer: p.photographer ?? '',
+    })
+  } catch {
+    return c.json({ photo: null })
+  }
+})
+
 /** FIRMS quota status (§3.1) for the dev/debug corner. */
 app.get('/api/quota', async (c) => {
   if (!MAP_KEY) return c.json({ hasKey: false, mode: 'public-feed' })

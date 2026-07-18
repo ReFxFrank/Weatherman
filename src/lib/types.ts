@@ -404,6 +404,34 @@ export interface FlightsData {
  *  snapshot at render time (a plane that leaves the view closes its card). */
 export type AircraftSelection = { hex: string }
 
+/** An airport endpoint of a scheduled route. */
+export interface RouteAirport {
+  iata: string
+  icao: string
+  lat: number
+  lon: number
+  name: string
+  municipality: string
+}
+
+/** A flight's SCHEDULED route (origin → destination), looked up by callsign
+ *  from adsbdb — estimated from the schedule database, NOT broadcast over
+ *  ADS-B. Labeled as such. */
+export interface FlightRoute {
+  airline: string
+  origin: RouteAirport
+  destination: RouteAirport
+}
+
+/** Aircraft photo metadata from planespotters (proxied; the API requires a
+ *  server-set User-Agent browsers can't send). A library photo of the
+ *  registration, not this exact flight. */
+export interface AircraftPhoto {
+  thumb: string
+  link: string
+  photographer: string
+}
+
 // ---------------------------------------------------------------------------
 // Armed conflict (UCDP + GDELT) — mirrors server/conflict.ts. Two distinct,
 // never-merged layers: UCDP verified fatal events, GDELT unverified news.

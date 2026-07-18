@@ -9,6 +9,7 @@ import type {
   DecodedFire,
   EonetEvent,
   FireData,
+  FlightRoute,
   FlightsData,
   HurricanePayload,
   LightningData,
@@ -37,6 +38,7 @@ import { setAuroraShimmer, syncAuroraLayers } from '../lib/auroraLayers'
 import { FLIGHT_CLICK_LAYERS, pickAircraft, syncFlightLayers } from '../lib/flightLayers'
 import { CONFLICT_CLICK_LAYERS, pickConflictFeature, syncConflictLayers } from '../lib/conflictLayers'
 import { syncFirLayers } from '../lib/firLayers'
+import { syncRouteLayers } from '../lib/routeLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -127,6 +129,7 @@ export function EmberMap({
   flightTrail,
   flightsStale,
   firs,
+  route,
   conflict,
   entranceReady,
   events,
@@ -160,6 +163,8 @@ export function EmberMap({
   flightsStale: boolean
   /** European FIR boundaries (reference lines beneath the planes), null until loaded */
   firs: GeoJSON.FeatureCollection | null
+  /** selected aircraft's scheduled route (adsbdb), null when none/unknown */
+  route: FlightRoute | null
   /** armed-conflict payload (UCDP + GDELT), undefined until its globe is active */
   conflict: ConflictPayload | undefined
   /** active globe's data arrived OR its query errored — the entrance must
@@ -281,6 +286,7 @@ export function EmberMap({
     flightTrail,
     flightsStale,
     firs,
+    route,
     aircraftSelHex,
     conflict,
     selectedConflict,
@@ -308,6 +314,7 @@ export function EmberMap({
     flightTrail,
     flightsStale,
     firs,
+    route,
     aircraftSelHex,
     conflict,
     selectedConflict,
@@ -344,8 +351,9 @@ export function EmberMap({
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'aurora',
     })
-    // FIR boundaries first, so they render beneath the plane layers
+    // FIR boundaries, then the selected route, beneath the plane layers
     syncFirLayers(map, s.firs, { beforeId: EONET_ICON_LAYER, visible: s.globe === 'flights' })
+    syncRouteLayers(map, s.route, { beforeId: EONET_ICON_LAYER, visible: s.globe === 'flights' })
     syncFlightLayers(map, s.flights ?? null, {
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'flights',
@@ -535,6 +543,15 @@ export function EmberMap({
     if (!map) return
     syncFirLayers(map, firs, { beforeId: EONET_ICON_LAYER, visible: globe === 'flights' })
   }, [mapLoaded, firs, globe])
+
+  // The selected aircraft's scheduled route re-syncs when the selection (and
+  // thus the fetched route) changes.
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncRouteLayers(map, route, { beforeId: EONET_ICON_LAYER, visible: globe === 'flights' })
+  }, [mapLoaded, route, globe])
 
   // Dedicated re-sync for the live-aircraft snapshot (6 s poll / viewport
   // change) + selection highlight.
