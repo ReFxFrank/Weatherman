@@ -1,6 +1,7 @@
 import { decodeFireBinary } from './binary'
 import { decodeLightningBinary } from './lightningBinary'
 import type {
+  AuroraPayload,
   DecodedFire,
   DecodedLightning,
   EonetEvent,
@@ -217,6 +218,65 @@ export async function fetchQuakes(): Promise<QuakePayload> {
       strongestMag: quakes.length ? strongestMag : 0,
       strongestPlace,
     },
+  }
+}
+
+/**
+ * NOAA SWPC OVATION aurora forecast — keyless, CORS-open, public domain, a
+ * new grid every ~5 min (client-fetched in both deploy modes, like USGS). The
+ * payload is a 1° global grid ([lon 0–359, lat −90..90, prob 0–100]); we keep
+ * only cells above a visibility-meaningful threshold and normalize longitude
+ * to −180..180. This is a FORECAST (valid ~30–90 min ahead — solar-wind lead
+ * time from L1; the payload's Forecast Time carries the exact valid time),
+ * labeled as such.
+ */
+const OVATION_URL = 'https://services.swpc.noaa.gov/json/ovation_aurora_latest.json'
+export const AURORA_REFRESH_MS = 5 * 60_000
+/** cells below this forecast probability (%) aren't worth drawing (noise floor
+ *  around the ovals); keeps the field to a few thousand points */
+const AURORA_MIN_PROB = 5
+
+export async function fetchAurora(): Promise<AuroraPayload> {
+  const res = await fetch(OVATION_URL)
+  if (!res.ok) throw new Error(`aurora forecast feed failed (${res.status})`)
+  const raw = (await res.json()) as {
+    ['Observation Time']?: string
+    ['Forecast Time']?: string
+    coordinates?: Array<[number, number, number]>
+  }
+  // a healthy OVATION feed ALWAYS returns the full ~65k-cell grid; genuine
+  // quiet is that full grid at low probabilities. A missing/empty grid is an
+  // outage, not a calm sky — throw so it surfaces as an error chip, never a
+  // false "aurora unlikely" all-clear ("empty ≠ degraded"; review finding).
+  const coords = raw.coordinates
+  if (!Array.isArray(coords) || coords.length === 0) {
+    throw new Error('aurora forecast returned no grid')
+  }
+  const points: Array<[number, number, number]> = []
+  let peakProb = 0
+  for (const c of coords) {
+    const prob = c[2]
+    if (typeof prob !== 'number' || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) continue
+    // peak is over the WHOLE grid, so a quiet night still reports its true
+    // peak even when every cell is below the draw threshold (review finding)
+    if (prob > peakProb) peakProb = prob
+    if (prob < AURORA_MIN_PROB) continue
+    // OVATION longitude is 0–359; MapLibre wants −180..180
+    const lon = c[0] > 180 ? c[0] - 360 : c[0]
+    points.push([lon, c[1], prob])
+  }
+  const obs = typeof raw['Observation Time'] === 'string' ? raw['Observation Time'] : ''
+  const fc = typeof raw['Forecast Time'] === 'string' ? raw['Forecast Time'] : ''
+  return {
+    source: 'ovation',
+    observationTime: obs,
+    forecastTime: fc,
+    // true client fetch time (the type contract); forecastTime is the
+    // valid-time anchor used for display
+    fetchedAt: new Date().toISOString(),
+    points,
+    peakProb,
+    count: points.length,
   }
 }
 

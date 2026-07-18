@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CloudOff, Flame, RotateCcw, Satellite, TriangleAlert } from 'lucide-react'
 import {
+  AURORA_REFRESH_MS,
+  fetchAurora,
   fetchEonetEvents,
   fetchFireDecoded,
   fetchHurricanes,
@@ -150,6 +152,22 @@ export default function App() {
     enabled: globe === 'quakes',
   })
 
+  // Aurora globe (NOAA SWPC OVATION): keyless, CORS-open forecast field
+  // fetched client-side (like USGS/EONET), a new grid every ~5 min. It's a
+  // FORECAST, not observed aurora — labeled as such.
+  const {
+    data: auroraData,
+    isLoading: auroraLoading,
+    isError: auroraError,
+    error: auroraErr,
+  } = useQuery({
+    queryKey: ['aurora'],
+    queryFn: fetchAurora,
+    placeholderData: keepPreviousData,
+    refetchInterval: AURORA_REFRESH_MS,
+    enabled: globe === 'aurora',
+  })
+
   // Wall-clock tick for the non-fire globes: lightning lag chips and the
   // severe expiry filter must track real time between refetches (which can
   // be 10 min apart on Pages; review findings).
@@ -262,6 +280,7 @@ export default function App() {
     severe: Boolean(severeShown) || severeError,
     hurricanes: Boolean(hurricanesData) || hurricanesError,
     quakes: Boolean(quakesData) || quakesError,
+    aurora: Boolean(auroraData) || auroraError,
   }
   const entranceReady = feedReadiness[globe]
 
@@ -529,6 +548,18 @@ export default function App() {
         )}
       </>
     ),
+    // aurora CAN be genuinely quiet (low geomagnetic activity) — a faint oval
+    // is a real forecast, not a failure.
+    aurora: (
+      <>
+        {auroraError && errChip('Aurora forecast feed unreachable — retrying automatically')}
+        {auroraData && !auroraError && auroraData.count === 0 && (
+          <div className={`pointer-events-none flex items-center gap-2 px-3 py-2 text-[11px] text-slate-300 ${glass}`}>
+            Aurora unlikely right now — the forecast oval is faint at both poles
+          </div>
+        )}
+      </>
+    ),
   }
 
   const feedStatus: Record<GlobeId, ReactNode> = {
@@ -681,6 +712,35 @@ export default function App() {
         )}
       </>
     ),
+    aurora: (
+      <>
+        {auroraLoading && (
+          <span className="animate-pulse text-slate-300">ACQUIRING {GLOBES.aurora.feedName}…</span>
+        )}
+        {auroraError && (
+          <span className="text-red-400">
+            FEED ERROR — {auroraErr instanceof Error ? auroraErr.message.slice(0, 60) : 'unknown'}
+          </span>
+        )}
+        {auroraData && !auroraError && (
+          <span>
+            {/* peak = highest cell probability in the field; it's a FORECAST */}
+            <span
+              className={
+                auroraData.peakProb >= 50
+                  ? 'text-emerald-300'
+                  : auroraData.peakProb >= 20
+                    ? 'text-emerald-400/90'
+                    : 'text-slate-300'
+              }
+            >
+              peak {auroraData.peakProb}%
+            </span>{' '}
+            aurora chance · forecast · both poles · OVATION
+          </span>
+        )}
+      </>
+    ),
   }
 
   return (
@@ -694,6 +754,7 @@ export default function App() {
         hurricanes={globe === 'hurricanes' ? hurricanesData : undefined}
         quakes={globe === 'quakes' ? quakesData : undefined}
         quakesStale={globe === 'quakes' && quakesError && Boolean(quakesData)}
+        aurora={globe === 'aurora' ? auroraData : undefined}
         entranceReady={entranceReady}
         events={events}
         quality={quality}
@@ -844,6 +905,12 @@ export default function App() {
             {new Date(quakesData.fetchedAt).toISOString().slice(11, 16)}Z
           </div>
         )}
+        {globe === 'aurora' && auroraData && (
+          <div className="mt-1 font-mono text-[10px] text-slate-500">
+            OVATION forecast · visible on the dark side · valid{' '}
+            {auroraData.forecastTime ? `${auroraData.forecastTime.slice(11, 16)}Z` : 'now'}
+          </div>
+        )}
         <GlobeSwitcher className="mt-2" />
         {debug && (
           <div className="mt-1 font-mono text-[10px] text-cyan-500/80">
@@ -860,9 +927,11 @@ export default function App() {
                   ? `${(hurricanesData?.counts.nhcActive ?? 0) + (hurricanesData?.counts.globalActive ?? 0)} storms 🌀`
                   : globe === 'quakes'
                     ? `${(quakesData?.counts.total ?? 0).toLocaleString()} quakes 🌍`
-                    : `${(data?.count ?? 0).toLocaleString()}${
-                        data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
-                      }`}
+                    : globe === 'aurora'
+                      ? `${(auroraData?.count ?? 0).toLocaleString()} cells · peak ${auroraData?.peakProb ?? 0}% 🌌`
+                      : `${(data?.count ?? 0).toLocaleString()}${
+                          data && data.count !== data.meta.count ? ` of ${data.meta.count.toLocaleString()}` : ''
+                        }`}
             {quota ? ` · quota ${quota.current}/${quota.limit}` : ''}
           </div>
         )}

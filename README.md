@@ -3,8 +3,8 @@
 **Live hazard globes** — a dark, rotating Earth in space with selectable data globes: glowing
 near-real-time fire detections from NASA satellites, live lightning from NOAA and EUMETSAT
 geostationary sensors, US severe-weather warnings from the NWS, tropical cyclones with
-NHC forecast cones, and global earthquakes from USGS. Mission-control aesthetics, GPU
-rendering, real data only.
+NHC forecast cones, global earthquakes from USGS, and the aurora forecast from NOAA SWPC.
+Mission-control aesthetics, GPU rendering, real data only.
 
 > Build spec: [`docs/BRIEF.md`](docs/BRIEF.md) · Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
@@ -23,6 +23,7 @@ rendering, real data only.
 | **8 — Hardening + hurricanes globe** | globe registry (adding a globe = compile-checked checklist), shared display controls on every globe, NHC active storms + forecast cone/track/points + past track, EONET global storms (48 h phantom filter), Saffir-Simpson category ramp, cone-honesty legend | ✅ done |
 | **9 — Honesty hardening + detail cards** | severe `degraded` marker (SPC outage ≠ quiet day), NWS expiry-offset comparison fix, mobile Display/Legend sheet on every globe, click-to-inspect detail cards for warnings/watches/reports and storm heads/forecast points, interaction-verification harness (`verify-cards.mjs`) | ✅ done |
 | **10 — Earthquakes globe** | live USGS all-day feed (keyless, CORS-open, client-fetched every minute), magnitude-scaled glow + core + animated ripple, M≥6 labels, seismic color ramp, click-to-inspect detail card (depth/felt/tsunami/USGS link), instrumentation-bias coverage legend | ✅ done |
+| **11 — Aurora globe** | NOAA SWPC OVATION forecast field (keyless, CORS-open, ~5-min grid), green auroral-oval glow at both poles with a gentle shimmer, honestly labeled as a probability forecast (not observed), pairs with the night-side terminator | ✅ done |
 
 ## Stack
 
@@ -123,7 +124,7 @@ unchanged; move the in-memory cache to edge KV if you deploy it serverless.
 ### Deep links & dev params
 
 The URL mirrors the view — copy the address bar to share it:
-`?globe=lightning|severe|hurricanes|quakes` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
+`?globe=lightning|severe|hurricanes|quakes|aurora` data globe · `?lat=&lon=&z=` camera (skips the entrance) ·
 `?source=` · `?days=1..10` · `?frp=` min FRP · `?conf=1|2` · `?dn=day|night`.
 
 Dev/test extras: `?quality=high|balanced|performance` force a quality tier ·
@@ -135,5 +136,6 @@ Active fire data: **NASA FIRMS** (MODIS/VIIRS) · Lightning: **NOAA GOES GLM**
 (via the NOAA Open Data Dissemination S3 buckets) and **EUMETSAT Meteosat MTG-I1
 Lightning Imager** ·
 Severe weather: **NOAA NWS / SPC** · Hurricanes: **NOAA NHC** ·
-Earthquakes: **USGS** · Named events & global storms: **NASA EONET** · Basemap:
+Earthquakes: **USGS** · Aurora: **NOAA SWPC** (OVATION) ·
+Named events & global storms: **NASA EONET** · Basemap:
 © [CARTO](https://carto.com/attributions), © OpenStreetMap contributors.

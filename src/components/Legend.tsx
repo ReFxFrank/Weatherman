@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import { FRP_STOPS } from '../lib/colors'
 import { CAT } from '../lib/hurricaneLayers'
 import { lightningColor } from '../lib/lightningBinary'
+import { auroraColor } from '../lib/auroraLayers'
 import { quakeColor } from '../lib/quakeLayers'
 import type { GlobeId } from '../store'
 
@@ -224,6 +225,45 @@ function QuakeLegend(_props: { hasMtg?: boolean }) {
   )
 }
 
+const AURORA_GRADIENT = `linear-gradient(90deg, ${[5, 20, 40, 60, 80, 100]
+  .map((p) => {
+    const [r, g, b] = auroraColor(p)
+    return `rgb(${r},${g},${b}) ${p}%`
+  })
+  .join(', ')})`
+
+function AuroraLegend(_props: { hasMtg?: boolean }) {
+  return (
+    <>
+      <div className="h-2 rounded-sm" style={{ background: AURORA_GRADIENT }} />
+      <div className="mt-0.5 flex justify-between font-mono text-[9px] text-slate-500">
+        <span>low</span>
+        <span>high</span>
+      </div>
+      <p className="mb-2 text-[9px] text-slate-600">forecast probability of visible aurora</p>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="h-2.5 w-3.5 shrink-0 rounded-sm"
+            style={{ background: 'rgb(34,197,94)', filter: 'blur(1.5px)', opacity: 0.8 }}
+          />
+          <span className="text-[10px] text-slate-400">auroral oval · brighter = likelier</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="h-2.5 w-3.5 shrink-0 rounded-sm border border-slate-500/40 bg-[#020617]/70" />
+          <span className="text-[10px] text-slate-400">visible only on the dark side</span>
+        </div>
+        <p className="text-[9px] leading-snug text-slate-600">
+          NOAA SWPC OVATION model — a <em>forecast</em> of where aurora is likely ≈30–90 min
+          ahead, both poles, refreshed every ~5 min. It shows probability, not live sightings,
+          and aurora is only visible where the sky is dark and clear. Source: NOAA SWPC.
+        </p>
+      </div>
+    </>
+  )
+}
+
 function FireLegend() {
   return (
     <>
@@ -288,6 +328,7 @@ const LEGEND_BODIES: Record<GlobeId, ComponentType<{ hasMtg?: boolean }>> = {
   severe: SevereLegend,
   hurricanes: HurricaneLegend,
   quakes: QuakeLegend,
+  aurora: AuroraLegend,
 }
 
 export function Legend({

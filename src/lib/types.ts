@@ -310,6 +310,27 @@ export interface QuakePayload {
  *  payload at render time (an event aging out of the window closes its card). */
 export type QuakeSelection = { id: string }
 
+// ---------------------------------------------------------------------------
+// Aurora (NOAA SWPC OVATION) — a FORECAST probability field, not observed
+// aurora. Fetched straight from the client (keyless, CORS-open). Display-only
+// (no clickable detail — it's a continuous field, not discrete events).
+// ---------------------------------------------------------------------------
+
+export interface AuroraPayload {
+  source: 'ovation'
+  /** the solar-wind observation the model ran from, ISO */
+  observationTime: string
+  /** the time this probability field is valid FOR (≈30–90 min ahead), ISO */
+  forecastTime: string
+  /** when the client fetched, ISO */
+  fetchedAt: string
+  /** [lon(−180..180), lat, prob(1–100)] for cells above the render threshold */
+  points: Array<[number, number, number]>
+  /** highest cell probability in the field, % */
+  peakProb: number
+  count: number
+}
+
 /** A curated named wildfire event from NASA EONET v3. */
 export interface EonetEvent {
   id: string

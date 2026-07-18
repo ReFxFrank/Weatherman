@@ -4,6 +4,7 @@ import type { MapRef } from 'react-map-gl/maplibre'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import type {
+  AuroraPayload,
   DecodedFire,
   EonetEvent,
   FireData,
@@ -30,6 +31,7 @@ import {
   setQuakeRipplePhase,
   syncQuakeLayers,
 } from '../lib/quakeLayers'
+import { setAuroraShimmer, syncAuroraLayers } from '../lib/auroraLayers'
 import { syncTerminatorLayers } from '../lib/terminator'
 import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
@@ -115,6 +117,7 @@ export function EmberMap({
   hurricanes,
   quakes,
   quakesStale,
+  aurora,
   entranceReady,
   events,
   quality,
@@ -137,6 +140,8 @@ export function EmberMap({
   /** the USGS feed is erroring while showing last-good data — withdraw the
    *  ripple's "last hour" recency cue */
   quakesStale: boolean
+  /** aurora forecast field (NOAA OVATION), undefined until its globe is active */
+  aurora: AuroraPayload | undefined
   /** active globe's data arrived OR its query errored — the entrance must
    *  not wait forever on a feed that is down (review finding); App owns the
    *  per-globe query state, so App computes this */
@@ -248,6 +253,7 @@ export function EmberMap({
     hurricaneSelKey,
     quakes,
     quakeSelId,
+    aurora,
   })
   styleStateRef.current = {
     projection,
@@ -267,6 +273,7 @@ export function EmberMap({
     hurricaneSelKey,
     quakes,
     quakeSelId,
+    aurora,
   }
 
   /** Recreate every native layer in stack order (bottom→top: choropleth,
@@ -295,6 +302,10 @@ export function EmberMap({
       beforeId: EONET_ICON_LAYER,
       visible: s.globe === 'quakes',
       selectedId: s.quakeSelId,
+    })
+    syncAuroraLayers(map, s.aurora ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: s.globe === 'aurora',
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
@@ -371,7 +382,8 @@ export function EmberMap({
       ignite < 1 ||
       globe === 'severe' ||
       globe === 'hurricanes' ||
-      globe === 'quakes'
+      globe === 'quakes' ||
+      globe === 'aurora'
     )
       return
     let raf = 0
@@ -451,6 +463,36 @@ export function EmberMap({
       selectedId: quakeSelId,
     })
   }, [mapLoaded, quakes, globe, quakeSelId])
+
+  // Dedicated re-sync for the aurora field (5-min forecast refresh).
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    syncAuroraLayers(map, aurora ?? null, {
+      beforeId: EONET_ICON_LAYER,
+      visible: globe === 'aurora',
+    })
+  }, [mapLoaded, aurora, globe])
+
+  // Aurora shimmer: a self-contained rAF gently breathes the glow opacity,
+  // mounted only on the aurora globe (same idiom as the quake ripple — its own
+  // loop, no React re-render). document.hidden pauses it.
+  useEffect(() => {
+    if (!mapLoaded || globe !== 'aurora') return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    let raf = 0
+    let last = 0
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick)
+      if (document.hidden || now - last < 50) return
+      last = now
+      setAuroraShimmer(map, now)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [mapLoaded, globe])
 
   // Ripple animation: a self-contained rAF drives the sonar-ping ring via
   // setPaintProperty, mounted only on the quakes globe (so it never re-renders
@@ -613,8 +655,9 @@ export function EmberMap({
   const layers = useMemo(() => {
     // splats render beneath the event reticles once those layers exist
     const beforeId = mapLoaded ? EONET_ICON_LAYER : undefined
-    // all-native globes (polygons/lines/points — no deck splats)
-    if (globe === 'severe' || globe === 'hurricanes' || globe === 'quakes') return []
+    // all-native globes (polygons/lines/points/field — no deck splats)
+    if (globe === 'severe' || globe === 'hurricanes' || globe === 'quakes' || globe === 'aurora')
+      return []
     if (globe === 'lightning') {
       return lightning
         ? buildLightningLayers({

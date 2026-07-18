@@ -630,3 +630,40 @@ public-domain, minute-fresh.
   throwing mid-glyph-load reports `err`, not an aborted report — this also
   protected the hurricane/eonet symbol layers). `verify-cards.mjs` clicks the
   strongest live quake and asserts the card.
+
+
+## Phase 11 notes — the aurora globe (NOAA OVATION)
+
+The sixth globe — the "gorgeous on the night side we already draw" pick.
+
+- **Source → NOAA SWPC OVATION** (`ovation_aurora_latest.json`), fetched
+  straight from the client in both modes (the USGS/EONET pattern) — keyless,
+  `Access-Control-Allow-Origin: *`, `max-age=60`, a fresh grid every ~5 min.
+  It's a **1° global probability grid** `[lon 0–359, lat −90..90, prob 0–100]`;
+  `fetchAurora` keeps cells ≥ 5 % (the noise floor around the ovals — a few
+  thousand points), and converts `lon > 180 → lon − 360` for MapLibre.
+- **It is a FORECAST, not observed aurora** — the payload's `Observation
+  Time` is the solar-wind input and `Forecast Time` is ~30–90 min ahead, so
+  freshness is anchored to the forecast valid-time and every surface says so
+  (HUD "peak N% aurora **chance** · **forecast**", subline "OVATION forecast
+  · visible on the dark side · valid HH:MMZ", legend "a *forecast* of where
+  aurora is likely… shows probability, not live sightings"). Brightness maps
+  to *probability*, not physical intensity — the legend says that too.
+- **Render → native circle field, not deck.** A blurred wide `aur-glow`
+  (green ramp + opacity by probability) whose ~1°-spaced discs overlap into a
+  continuous auroral-oval band, plus a tighter brighter `aur-core` ridge on
+  the higher-probability cells. Display-only, like the lightning globe: the
+  OVATION output is a continuous field, so there is nothing discrete to click
+  (no card/selection/picking/cursor). A gentle `setAuroraShimmer` breathes the
+  glow opacity ±9 % via a self-contained rAF mounted only on the aurora globe;
+  aurora joins the deck-pulse skip list. The opacity floor is lifted enough
+  that even a quiet-night oval (peak ~20 %) reads as a clear band while
+  brightness still climbs with probability.
+- **Both hemispheres, dark-side-only**: the OVATION grid covers the northern
+  AND southern ovals; aurora is only *visible* where the sky is dark, which is
+  why the globe pairs naturally with the real-time terminator (on by default).
+  Coverage stated honestly in the legend.
+- **Quiet ≠ error** (honesty): unlike the always-populated quake feed, aurora
+  can be genuinely faint during low geomagnetic activity — `count === 0` above
+  the threshold is a legitimate "aurora unlikely right now" chip, not a
+  degraded/error state. `headless-check.mjs` gained the `aur-` layer prefix.
