@@ -65,7 +65,8 @@ function LightningLegend({ hasMtg = false }: { hasMtg?: boolean }) {
             ? 'GOES (Americas) + Meteosat (Europe/Africa) — outside the rings means no coverage, not no lightning; a red ring means that satellite is currently dark. '
             : 'GOES GLM sees the Americas & adjacent oceans — outside the rings means no coverage, not no lightning; a red ring means that satellite is currently dark. '}
           Where rings overlap, both satellites see the same storm, so detections there can
-          count a flash twice. Strikes fade over 60 min.
+          count a flash twice. Strikes fade over 60 min. Click a flash for
+          when/where/how-strong details; the bottom bar scrubs the age window.
         </p>
       </div>
     </>

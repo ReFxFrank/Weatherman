@@ -74,6 +74,10 @@ export interface EmberState {
   selectedAircraft: AircraftSelection | null
   /** clicked conflict feature (UCDP event / GDELT news) whose card is open */
   selectedConflict: ConflictSelection | null
+  /** index into the current (rendered) LightningData of the open flash card */
+  selectedFlash: number | null
+  /** lightning age-window cap in minutes (3/10/30); null = full window */
+  lightningWindowMin: number | null
   /** right-hand stats panel expanded (§5.4) */
   statsOpen: boolean
   /** real-time day/night terminator shading (§5.7) */
@@ -130,6 +134,8 @@ export const useEmber = create<EmberState>(() => ({
   selectedQuake: null,
   selectedAircraft: null,
   selectedConflict: null,
+  selectedFlash: null,
+  lightningWindowMin: null,
   statsOpen: true,
   showTerminator: true,
   sheet: null,
@@ -153,6 +159,7 @@ export function setEmber(partial: Partial<EmberState>) {
       selectedQuake: null,
       selectedAircraft: null,
       selectedConflict: null,
+      selectedFlash: null,
       sheet: null,
       ...partial,
     }

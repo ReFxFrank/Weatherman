@@ -28,6 +28,7 @@ Mission-control aesthetics, GPU rendering, real data only.
 | **12 — Flights globe** | live aircraft from airplanes.live ADS-B (keyless, CORS-open, non-commercial), viewport-following (≈250 nm), plane glyphs rotated to heading + colored by altitude, trails, data-block labels, emergency/military highlighting, click-to-inspect detail card, coverage-honest | ✅ done |
 | **12b — Flight route + photo** | click a plane → scheduled great-circle route (adsbdb, client-direct) + real aircraft photo (Planespotters, proxied) + European FIR boundaries; all labeled NOT-from-ADS-B | ✅ done (photo lights up on static Pages via the `worker/` Cloudflare Worker once `PHOTO_PROXY_URL` is set; hidden until then) |
 | **13 — Armed-conflict globe** | UCDP verified fatal events (CC BY, monthly, sized by death toll) + a separate labeled GDELT conflict-news layer (15-min, unverified), proxy/bake (server-side unzip), distinct rendering + cards, strong verified-vs-unverified honesty | ✅ done |
+| **15 — Lightning depth** | click-a-flash detail card (live-ticking age, UTC time, energy + window percentile, satellite, reverse-geocoded place), strike-rate per-minute timeline, age-window buttons (GPU filter, no refetch), selection survives refetches by identity | ✅ done |
 
 ## Stack
 

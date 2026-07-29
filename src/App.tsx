@@ -30,6 +30,7 @@ import { deriveLightningAttributes } from './lib/lightningBinary'
 import { computeChoropleth } from './lib/choropleth'
 import { startDeepLinkSync } from './lib/deepLink'
 import { exportView } from './lib/exportView'
+import { flashAgeAtFetchMax } from './lib/nearestFlash'
 import { fetchPerimeters } from './lib/perimeters'
 import { qualityConfig } from './lib/quality'
 import { computeFireStats } from './lib/stats'
@@ -38,6 +39,8 @@ import { useFps } from './lib/useFps'
 import { BottomSheet } from './components/BottomSheet'
 import { EmberMap } from './components/EmberMap'
 import { EventCard } from './components/EventCard'
+import { FlashCard } from './components/FlashCard'
+import { LightningStrip } from './components/LightningStrip'
 import { DisplayPanel, FilterPanel } from './components/FilterPanel'
 import { GlobeSwitcher } from './components/GlobeSwitcher'
 import { HotspotCard } from './components/HotspotCard'
@@ -87,6 +90,8 @@ export default function App() {
   const selectedQuake = useEmber((s) => s.selectedQuake)
   const selectedAircraft = useEmber((s) => s.selectedAircraft)
   const selectedConflict = useEmber((s) => s.selectedConflict)
+  const selectedFlash = useEmber((s) => s.selectedFlash)
+  const lightningWindowMin = useEmber((s) => s.lightningWindowMin)
   const viewEpoch = useEmber((s) => s.viewEpoch)
   const showChoropleth = useEmber((s) => s.showChoropleth)
   const showPerimeters = useEmber((s) => s.showPerimeters)
@@ -128,6 +133,66 @@ export default function App() {
     () => (lightningDecoded ? deriveLightningAttributes(lightningDecoded, quality.maxPoints) : undefined),
     [lightningDecoded, quality],
   )
+
+  // Flash selection must survive the 60 s refetch: indices reshuffle per
+  // payload, so remember the selected flash's identity (flashes are
+  // immutable facts) and re-find it in each new render set. Derived during
+  // render — the validated index is passed DOWN to EmberMap/FlashCard (same
+  // pattern as the fire globe's validSelection), so no one-frame mismatch.
+  const flashSelRef = useRef<{
+    data: typeof lightningData
+    id: { lon: number; lat: number; ts: number; e: number } | null
+  }>({ data: undefined, id: null })
+  const validFlash = (() => {
+    const st = flashSelRef.current
+    const dataChanged = st.data !== lightningData
+    st.data = lightningData
+    if (selectedFlash === null || !lightningData) {
+      st.id = null
+      return null
+    }
+    // Same visibility predicate as the GPU filter and click picking: a
+    // selected flash that slides out of the (possibly narrowed) age window
+    // must drop its ring/card, not float over empty map (review finding —
+    // the orphaned-selection class the fire globe already closed). The 30 s
+    // uiTick re-render bounds how long an aged-out selection can linger.
+    const fetchSec = Math.floor(Date.parse(lightningData.meta.fetchedAt) / 1000) || Date.now() / 1000
+    const maxAge = flashAgeAtFetchMax(lightningData.meta, Date.now() / 1000, lightningWindowMin)
+    const visible = (i: number) => (fetchSec - lightningData.tsSec[i]) / 60 <= maxAge
+    if (!dataChanged) {
+      if (selectedFlash >= lightningData.count || !visible(selectedFlash)) {
+        st.id = null
+        return null
+      }
+      st.id = {
+        lon: lightningData.positions[selectedFlash * 2],
+        lat: lightningData.positions[selectedFlash * 2 + 1],
+        ts: lightningData.tsSec[selectedFlash],
+        e: lightningData.energy[selectedFlash],
+      }
+      return selectedFlash
+    }
+    const id = st.id
+    if (!id) return null
+    for (let i = 0; i < lightningData.count; i++) {
+      if (
+        lightningData.tsSec[i] === id.ts &&
+        lightningData.positions[i * 2] === id.lon &&
+        lightningData.positions[i * 2 + 1] === id.lat &&
+        lightningData.energy[i] === id.e
+      ) {
+        if (!visible(i)) break
+        return i
+      }
+    }
+    st.id = null
+    return null // aged out (or decimated away) of the new payload
+  })()
+  // keep the store index in step with the derived one after a payload swap
+  useEffect(() => {
+    if (validFlash !== selectedFlash) setEmber({ selectedFlash: validFlash })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validFlash])
 
   // Severe weather globe (NWS/SPC): tiny JSON payload, fast poll — warnings
   // appear within seconds of issuance.
@@ -619,8 +684,10 @@ export default function App() {
   const quotaLike = isError && /quota|429|transaction/i.test(error instanceof Error ? error.message : '')
 
   if (import.meta.env.DEV) {
-    // test hook: lets headless verification locate real event markers
+    // test hooks: let headless verification locate real event markers and
+    // real flash positions to click
     ;(window as unknown as { __emberEvents?: typeof events }).__emberEvents = events
+    ;(window as unknown as { __emberLightning?: typeof lightningData }).__emberLightning = lightningData
   }
 
   // ------------------------------------------------------------------
@@ -819,6 +886,9 @@ export default function App() {
               ? `last ${lightningDecoded.meta.windowMin} min`
               : `${lightningDecoded.meta.windowMin} min to ${new Date(lightningDecoded.meta.fetchedAt).toISOString().slice(11, 16)}Z`}{' '}
             · GOES GLM
+            {lightningWindowMin !== null && (
+              <span className="text-sky-400"> · showing {lightningWindowMin}m</span>
+            )}
             {lightningDecoded.meta.backfill < 0.98 &&
               ` · filling ${Math.round(lightningDecoded.meta.backfill * 100)}%`}
           </span>
@@ -1021,6 +1091,7 @@ export default function App() {
         events={events}
         quality={quality}
         selectedIndex={validSelection}
+        selectedFlashIndex={validFlash}
         choropleth={choropleth}
         perimeters={showPerimeters ? (perimeters ?? null) : null}
       />
@@ -1033,6 +1104,13 @@ export default function App() {
         <StatsPanel stats={stats} newSince={newSince} onJumpTo={jumpToFire} onExport={onExport} />
       )}
       {globe === 'fire' && <TimeControl data={data} dataUpdatedAt={dataUpdatedAt} />}
+      {globe === 'lightning' && lightningDecoded && (
+        <LightningStrip
+          decoded={lightningDecoded}
+          windowMin={lightningWindowMin}
+          onWindow={(w) => setEmber({ lightningWindowMin: w, selectedFlash: null })}
+        />
+      )}
 
       {/* bottom-right slot: detail card wins, legend otherwise */}
       {globe === 'fire' && decoded && validSelection !== null ? (
@@ -1044,6 +1122,14 @@ export default function App() {
         />
       ) : globe === 'fire' && selectedEventId ? (
         <EventCard events={events} className={CARD_POS} />
+      ) : globe === 'lightning' && lightningData && lightningDecoded && validFlash !== null ? (
+        <FlashCard
+          data={lightningData}
+          full={lightningDecoded}
+          index={validFlash}
+          onClose={() => setEmber({ selectedFlash: null })}
+          className={CARD_POS}
+        />
       ) : globe === 'severe' && validSevereSelection ? (
         <SevereCard
           selection={validSevereSelection}

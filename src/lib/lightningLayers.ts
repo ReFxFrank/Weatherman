@@ -63,6 +63,8 @@ export interface LightningLayerOpts {
   ignite: number
   /** flicker phase 0→1 (shared with the fire pulse driver) */
   pulse?: number
+  /** user age-window cap, minutes (store.lightningWindowMin); null = full */
+  windowMin?: number | null
   beforeId?: string
 }
 
@@ -73,6 +75,7 @@ export function buildLightningLayers({
   nowSec,
   ignite,
   pulse = 0,
+  windowMin: userWindowMin = null,
   beforeId,
 }: LightningLayerOpts): Layer[] {
   const { meta } = data
@@ -84,7 +87,9 @@ export function buildLightningLayers({
   // sliding would silently age out data and empty the fresh tier while the
   // header still said "live" (review finding).
   const elapsedMin = meta.mode === 'live' ? Math.max(0, (nowSec - fetchSec) / 60) : 0
-  const windowMin = meta.windowMin || 60
+  // The strip's age-window buttons narrow the visible window — purely a GPU
+  // filter-range change, never a refetch (same idiom as fire playback).
+  const windowMin = Math.min(meta.windowMin || 60, userWindowMin ?? Number.POSITIVE_INFINITY)
 
   // Sliding window: a flash with ageAtFetch v is currently v + elapsed old.
   const trailHi = windowMin - elapsedMin

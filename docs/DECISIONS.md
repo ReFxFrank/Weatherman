@@ -879,3 +879,55 @@ free tier — 100k req/day, 24 h edge cache).
   *Actions* workflow (upload-pages-artifact), not Cloudflare Pages, so there's
   no Functions runtime in this deploy. A standalone Worker is independent of
   the host and portable if the deploy target ever changes.
+## Phase 15 notes — lightning depth (picking, flash card, strike-rate strip)
+
+- **Flash picking** reuses the fire globe's CPU nearest-search idiom
+  (`nearestFlash.ts`) but searches the RENDERED (quality-decimated) set,
+  not the full payload — what you click is what's glowing. The age cutoff
+  mirrors `lightningLayers.ts` exactly (live slides with the wall clock,
+  baked freezes at the bake instant) so filtered-out history can't be
+  picked.
+- **The card's headline is "how long ago"** — a 1 s-ticking relative age —
+  because that's the question the globe raises. Honesty callouts: GLM
+  flash times snap to the 20 s granule start (MTG-LI carries true
+  per-flash seconds, so the caveat renders only for GLM); position is
+  cloud-top light seen from orbit (~8–14 km GLM / ~4.5 km MTG pixels), not
+  the ground strike point; energy is optical energy at cloud top with a
+  percentile rank against the current window (sorted-copy per payload,
+  WeakMap-cached).
+- **Reverse geocoding** via Photon `/reverse` (keyless, CORS-open — the
+  same service the search box already uses; verified live). The nearest
+  OSM feature can be far from an offshore flash, so matches beyond 150 km
+  render as "open water / remote" instead of naming a distant town.
+- **Selection survives the 60 s refetch** by identity, not index: indices
+  reshuffle per payload, so App captures the selected flash's
+  (lon, lat, ts, energy) tuple and re-finds it in each new render set
+  during render, passing the validated index DOWN to EmberMap/FlashCard
+  (the fire globe's validSelection pattern) — no one-frame wrong-ring.
+  A flash that ages out (or is decimated away on a lower quality tier)
+  closes the card rather than silently re-pointing at a different strike.
+- **The strike-rate strip** (fire's playback slot): per-minute bins of the
+  FULL decoded payload (not the decimated render set — counts must be
+  true), live bins re-aged every 15 s, baked bins frozen at bake. The
+  det/min readout anchors to the newest timestamp IN THE DATA, not the
+  wall clock or bake instant (review finding: refetch lag + 20 s
+  granule-start quantization made a clock-anchored rate systematically
+  undercount — near zero "at bake" on Pages during an active storm), with
+  an inclusive upper bound because a whole GLM granule shares the edge
+  timestamp. Age-window buttons (ALL/30/10/3 min) are pure GPU
+  filter-range changes — never a refetch — the same idiom as fire
+  playback; the HUD gains a "showing Nm" note so a narrowed globe can't
+  read as a quiet hour.
+- **Review pass** (2 reviewers → per-finding adversarial verification, all
+  six findings confirmed and fixed): the age-window predicate now lives in
+  ONE place (`flashAgeAtFetchMax`) shared by the GPU cutoff mirror, click
+  picking and selection validation — a selected flash that slides out of
+  the window drops its ring/card instead of floating over empty map for up
+  to ~57 min (the orphaned-selection class the fire globe closed in Phase
+  4); a failed Photon lookup renders "location lookup unavailable" and is
+  never cached — only a successful answer may claim "open water"
+  (empty ≠ degraded); percentile copy names its denominator (the fetched
+  60-min window); "strikes/min" → "det/min" (stereo overlap
+  double-counts).
+- **Deferred**: energy-floor filter, per-satellite split in the strip,
+  click-a-bin scrubbing, flash clustering into storm cells.

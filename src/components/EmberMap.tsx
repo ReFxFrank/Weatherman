@@ -44,6 +44,7 @@ import { syncChoroplethLayer } from '../lib/choropleth'
 import { syncPerimetersLayer } from '../lib/perimeters'
 import { syncSelectionMarker } from '../lib/selectionMarker'
 import { findNearestHotspot } from '../lib/nearestHotspot'
+import { findNearestFlash } from '../lib/nearestFlash'
 import { mapBus } from '../lib/mapBus'
 import {
   ENTRANCE_START,
@@ -135,6 +136,7 @@ export function EmberMap({
   events,
   quality,
   selectedIndex,
+  selectedFlashIndex,
   choropleth,
   perimeters,
 }: {
@@ -175,6 +177,9 @@ export function EmberMap({
   quality: QualityConfig
   /** validated selection (App checks payload identity + active filters) */
   selectedIndex: number | null
+  /** validated flash selection into the lightning render set (App re-finds
+   *  it across refetches by identity) */
+  selectedFlashIndex: number | null
   /** country fire-count features (Phase 5), null while off/loading */
   choropleth: GeoJSON.FeatureCollection | null
   /** NIFC US perimeter features (Phase 5), null while off/loading */
@@ -217,6 +222,7 @@ export function EmberMap({
   const selectedQuake = useEmber((s) => s.selectedQuake)
   const selectedAircraft = useEmber((s) => s.selectedAircraft)
   const selectedConflict = useEmber((s) => s.selectedConflict)
+  const lightningWindowMin = useEmber((s) => s.lightningWindowMin)
 
   // Storm-head highlight key (NHC id / EONET title); forecast-point
   // selections have no head to emphasize.
@@ -243,6 +249,16 @@ export function EmberMap({
         : null,
     [full, selectedIndex],
   )
+  const flashPoint = useMemo(
+    () =>
+      lightning && selectedFlashIndex !== null && selectedFlashIndex < lightning.count
+        ? {
+            lon: lightning.positions[selectedFlashIndex * 2],
+            lat: lightning.positions[selectedFlashIndex * 2 + 1],
+          }
+        : null,
+    [lightning, selectedFlashIndex],
+  )
 
   // Coverage rings come from the payload's satellite list (GOES always;
   // Meteosat when configured). A dark satellite's ring restyles red.
@@ -255,10 +271,13 @@ export function EmberMap({
     [lightning],
   )
 
-  // Fire-specific dressing (event reticles, choropleth, perimeters, the
-  // selection ring) only exists on the fire globe; the terminator and the
-  // GLM coverage rings are shell/lightning concerns.
+  // Fire-specific dressing (event reticles, choropleth, perimeters) only
+  // exists on the fire globe; the terminator and the GLM coverage rings are
+  // shell/lightning concerns.
   const fireGlobe = globe === 'fire'
+  // The selection ring serves two globes: amber fire detection, sky flash.
+  const ringPoint = fireGlobe ? selectedPoint : globe === 'lightning' ? flashPoint : null
+  const ringColor = fireGlobe ? '#fcd34d' : '#7dd3fc'
 
   // Everything the style.load handler must restore after a basemap swap
   // (which wipes projection, sky, tint and all native layers), readable
@@ -270,7 +289,8 @@ export function EmberMap({
     selectedEventId,
     showEvents: showEvents && fireGlobe,
     showTerminator,
-    selectedPoint: fireGlobe ? selectedPoint : null,
+    selectedPoint: ringPoint,
+    selectionColor: ringColor,
     choropleth,
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
@@ -298,7 +318,8 @@ export function EmberMap({
     selectedEventId,
     showEvents: showEvents && fireGlobe,
     showTerminator,
-    selectedPoint: fireGlobe ? selectedPoint : null,
+    selectedPoint: ringPoint,
+    selectionColor: ringColor,
     choropleth,
     showChoropleth: showChoropleth && fireGlobe,
     perimeters,
@@ -368,7 +389,7 @@ export function EmberMap({
     })
     syncChoroplethLayer(map, s.choropleth, s.showChoropleth)
     syncPerimetersLayer(map, s.perimeters, s.showPerimeters)
-    syncSelectionMarker(map, s.selectedPoint)
+    syncSelectionMarker(map, s.selectedPoint, s.selectionColor)
   }
 
   // Entrance: once the globe is up and the ACTIVE globe's data has arrived
@@ -479,7 +500,7 @@ export function EmberMap({
     selectedEventId,
     showEvents,
     showTerminator,
-    selectedPoint,
+    ringPoint,
     choropleth,
     showChoropleth,
     perimeters,
@@ -652,8 +673,8 @@ export function EmberMap({
     )
   }, [mapLoaded])
 
-  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe })
-  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe }
+  const pickStateRef = useRef({ full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe, lightning, lightningWindowMin })
+  pickStateRef.current = { full, frpMin, confMin, dayNight, timeRange, fireGlobe, globe, lightning, lightningWindowMin }
   useEffect(() => {
     if (!mapLoaded) return
     const map = mapRef.current?.getMap()
@@ -681,6 +702,19 @@ export function EmberMap({
       }
       if (s.globe === 'conflict') {
         setEmber({ selectedConflict: pickConflictFeature(map, e.point) })
+        return
+      }
+      if (s.globe === 'lightning') {
+        // deck splats, so CPU nearest-search like fire (honors the age cap)
+        if (!s.lightning) return
+        const idx = findNearestFlash(
+          s.lightning,
+          e.lngLat,
+          map.getZoom(),
+          Date.now() / 1000,
+          s.lightningWindowMin,
+        )
+        setEmber(idx !== null ? { selectedFlash: idx } : { selectedFlash: null })
         return
       }
       if (!s.fireGlobe) return // hotspot picking is a fire-globe affordance
@@ -804,6 +838,7 @@ export function EmberMap({
             nowSec: Date.now() / 1000,
             ignite,
             pulse,
+            windowMin: lightningWindowMin,
             beforeId,
           })
         : []
@@ -823,7 +858,7 @@ export function EmberMap({
         })
       : []
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [globe, lightning, data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, pulse, mapLoaded])
+  }, [globe, lightning, data, zoom, quality, frpMin, confMin, dayNight, timeRange, showHeat, showPoints, ignite, pulse, mapLoaded, lightningWindowMin])
 
   return (
     <Map

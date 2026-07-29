@@ -63,7 +63,7 @@ page.on('pageerror', (e) => errors.push(String(e).slice(0, 200)))
 if (proxyServer) {
   const { fetch: ufetch, ProxyAgent } = await import('undici')
   const dispatcher = new ProxyAgent(proxyServer)
-  await page.route(/cartocdn\.com|eonet\.gsfc\.nasa\.gov|github\.io/, async (route) => {
+  await page.route(/cartocdn\.com|eonet\.gsfc\.nasa\.gov|photon\.komoot\.io|github\.io/, async (route) => {
     try {
       const r = await ufetch(route.request().url(), { dispatcher })
       const body = Buffer.from(await r.arrayBuffer())
